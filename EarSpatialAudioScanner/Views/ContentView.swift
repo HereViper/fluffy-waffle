@@ -103,19 +103,26 @@ public struct ContentView: View {
                 .cornerRadius(8)
             }
             
-            if scanner.isFaceDetected {
+            if scanner.distanceMeters > 0 {
                 HStack(spacing: 16) {
                     Label(
                         title: { Text(String(format: "%.0f см", scanner.distanceMeters * 100)) },
                         icon: { Image(systemName: "ruler") }
                     )
-                    Label(
-                        title: { Text(String(format: "Угол: %.0f°", scanner.currentYaw)) },
-                        icon: { Image(systemName: "arrow.left.and.right") }
+                    .foregroundColor(
+                        (scanner.distanceMeters >= 0.20 && scanner.distanceMeters <= 0.38) ?
+                            (scanner.isLiquidGlassEnabled ? .cyan : .green) : .yellow
                     )
+                    
+                    if scanner.isFaceDetected {
+                        Label(
+                            title: { Text(String(format: "Угол: %.0f°", scanner.currentYaw)) },
+                            icon: { Image(systemName: "arrow.left.and.right") }
+                        )
+                        .foregroundColor(.white.opacity(0.85))
+                    }
                 }
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundColor(.white.opacity(0.85))
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
                 .background(Color.black.opacity(0.45))

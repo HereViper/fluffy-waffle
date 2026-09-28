@@ -139,6 +139,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     private let ciContext = CIContext(options: nil)
     private var snapshots: [CaptureSnapshot] = []
     private var latestDepthData: AVDepthData?
+    private var lastKnownFaceAnchor: ARFaceAnchor?
     private let depthAccumulator = DepthMedianAccumulator()
     
     private var lastBurstCaptureTime: Date?
@@ -171,18 +172,17 @@ public final class ScannerSession: NSObject, ObservableObject {
         exportedZipURL = nil
         totalVerticesCount = 0
         latestDepthData = nil
+        lastKnownFaceAnchor = nil
         targetHoldProgress = 0.0
         currentBurstCount = 0
         lastBurstCaptureTime = nil
         isCapturingStage = false
         depthAccumulator.reset()
+        distanceMeters = 0.0
         
         let config = ARFaceTrackingConfiguration()
         config.isLightEstimationEnabled = true
         config.providesAudioData = false
-        if ARFaceTrackingConfiguration.supportsWorldTracking {
-            config.isWorldTrackingEnabled = true
-        }
         
         session.run(config, options: [.resetTracking, .removeExistingAnchors])
         
@@ -196,6 +196,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         targetHoldProgress = 0.0
         currentBurstCount = 0
         lastBurstCaptureTime = nil
+        lastKnownFaceAnchor = nil
         depthAccumulator.reset()
     }
     
@@ -216,21 +217,21 @@ public final class ScannerSession: NSObject, ObservableObject {
     }
     
     private func evaluateStageCondition(yaw: Float, distance: Float, camPosInHead: simd_float3) -> Bool {
-        guard distance >= 0.18 && distance <= 0.50 else {
+        guard distance >= 0.16 && distance <= 0.46 else {
             return false
         }
         
         switch currentStage {
         case .centerFace:
-            return abs(yaw) <= 12.0 && distance <= 0.42
+            return abs(yaw) <= 15.0
         case .turnHeadLeftPartial:
-            return (yaw <= -12.0 || camPosInHead.x >= 0.035) && distance <= 0.40
+            return (yaw <= -10.0 || camPosInHead.x >= 0.030)
         case .turnHeadLeftFull:
-            return (yaw <= -28.0 || camPosInHead.x >= 0.055) && distance <= 0.36
+            return (yaw <= -22.0 || camPosInHead.x >= 0.045)
         case .turnHeadRightPartial:
-            return (yaw >= 12.0 || camPosInHead.x <= -0.035) && distance <= 0.40
+            return (yaw >= 10.0 || camPosInHead.x <= -0.030)
         case .turnHeadRightFull:
-            return (yaw >= 28.0 || camPosInHead.x <= -0.055) && distance <= 0.36
+            return (yaw >= 22.0 || camPosInHead.x <= -0.045)
         default:
             return false
         }
@@ -361,41 +362,77 @@ public final class ScannerSession: NSObject, ObservableObject {
 
 extension ScannerSession: ARSessionDelegate {
     public nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        var hardwareDistance: Float?
         if let depth = frame.capturedDepthData {
             Task { @MainActor in
                 self.latestDepthData = depth
             }
+            let depthMap = depth.depthDataMap
+            CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+            let w = CVPixelBufferGetWidth(depthMap)
+            let h = CVPixelBufferGetHeight(depthMap)
+            let bpr = CVPixelBufferGetBytesPerRow(depthMap)
+            if let base = CVPixelBufferGetBaseAddress(depthMap), w > 4 && h > 4 {
+                let cx = w / 2
+                let cy = h / 2
+                var samples: [Float] = []
+                samples.reserveCapacity(25)
+                for dy in -2...2 {
+                    let row = base.advanced(by: (cy + dy) * bpr).assumingMemoryBound(to: Float32.self)
+                    for dx in -2...2 {
+                        let d = row[cx + dx]
+                        if !d.isNaN && !d.isInfinite && d >= 0.12 && d <= 1.20 {
+                            samples.append(d)
+                        }
+                    }
+                }
+                if !samples.isEmpty {
+                    samples.sort()
+                    hardwareDistance = samples[samples.count / 2]
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(depthMap, .readOnly)
         }
         
-        guard let faceAnchor = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first else {
-            Task { @MainActor in
+        let faceAnchor = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first
+        
+        Task { @MainActor in
+            if let anchor = faceAnchor {
+                self.lastKnownFaceAnchor = anchor
+            }
+            
+            guard let anchor = faceAnchor ?? self.lastKnownFaceAnchor else {
                 self.isFaceDetected = false
+                if let hwDist = hardwareDistance {
+                    self.distanceMeters = hwDist
+                }
                 self.currentBurstCount = 0
                 self.lastBurstCaptureTime = nil
                 self.targetHoldProgress = 0.0
                 self.depthAccumulator.reset()
+                return
             }
-            return
-        }
-        
-        let transform = faceAnchor.transform
-        let r02 = transform.columns.2.x
-        let r12 = transform.columns.2.y
-        let yaw = asin(max(min(r02, 1.0), -1.0)) * 180.0 / .pi
-        let pitch = asin(max(min(-r12, 1.0), -1.0)) * 180.0 / .pi
-        let distance = simd_length(simd_float3(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z))
-        
-        let worldToHead = faceAnchor.transform.inverse
-        let cameraToWorld = frame.camera.transform
-        let cameraToHead = simd_mul(worldToHead, cameraToWorld)
-        let camPosInHead4 = simd_mul(cameraToHead, simd_float4(0, 0, 0, 1))
-        let camPosInHead = simd_float3(camPosInHead4.x, camPosInHead4.y, camPosInHead4.z)
-        
-        Task { @MainActor in
-            self.isFaceDetected = true
+            
+            let camTransform = frame.camera.transform
+            let camToFace = simd_mul(camTransform.inverse, anchor.transform)
+            let facePosInCam = simd_float3(camToFace.columns.3.x, camToFace.columns.3.y, camToFace.columns.3.z)
+            let anchorDist = simd_length(facePosInCam)
+            
+            let currentDist = hardwareDistance ?? anchorDist
+            self.distanceMeters = currentDist
+            self.isFaceDetected = (faceAnchor != nil)
+            
+            let r02 = camToFace.columns.2.x
+            let r12 = camToFace.columns.2.y
+            let yaw = asin(max(min(r02, 1.0), -1.0)) * 180.0 / .pi
+            let pitch = asin(max(min(-r12, 1.0), -1.0)) * 180.0 / .pi
             self.currentYaw = yaw
             self.currentPitch = pitch
-            self.distanceMeters = distance
+            
+            let worldToHead = anchor.transform.inverse
+            let cameraToHead = simd_mul(worldToHead, camTransform)
+            let camPosInHead4 = simd_mul(cameraToHead, simd_float4(0, 0, 0, 1))
+            let camPosInHead = simd_float3(camPosInHead4.x, camPosInHead4.y, camPosInHead4.z)
             
             guard self.currentStage == .centerFace ||
                     self.currentStage == .turnHeadLeftPartial ||
@@ -407,7 +444,7 @@ extension ScannerSession: ARSessionDelegate {
             
             guard !self.isCapturingStage else { return }
             
-            let isConditionMet = self.evaluateStageCondition(yaw: yaw, distance: distance, camPosInHead: camPosInHead)
+            let isConditionMet = self.evaluateStageCondition(yaw: yaw, distance: currentDist, camPosInHead: camPosInHead)
             
             if isConditionMet {
                 let now = Date()
@@ -431,7 +468,7 @@ extension ScannerSession: ARSessionDelegate {
                     self.lightTapGenerator.impactOccurred()
                     
                     if self.currentBurstCount >= self.targetBurstCount {
-                        self.handleStageCompletion(frame: frame, faceAnchor: faceAnchor)
+                        self.handleStageCompletion(frame: frame, faceAnchor: anchor)
                     }
                 }
             } else {

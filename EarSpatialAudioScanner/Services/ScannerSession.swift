@@ -25,15 +25,15 @@ public enum ScanStage: Equatable {
         case .idle:
             return "Нажмите «Начать сканирование»"
         case .centerFace:
-            return "Лицо прямо (дистанция 30 см, волосы назад)"
+            return "Лицо прямо (дистанция 30 см)"
         case .turnHeadLeftPartial:
-            return "Левое ухо 3/4: отведите телефон чуть влево"
+            return "Левое ухо 3/4: поверните голову влево на 25°"
         case .turnHeadLeftFull:
-            return "Левое ухо в профиль: камера прямо в ухо (25 см)"
+            return "Левое ухо в профиль: поверните голову влево на 45°"
         case .turnHeadRightPartial:
-            return "Правое ухо 3/4: отведите телефон чуть вправо"
+            return "Правое ухо 3/4: поверните голову вправо на 25°"
         case .turnHeadRightFull:
-            return "Правое ухо в профиль: камера прямо в ухо (25 см)"
+            return "Правое ухо в профиль: поверните голову вправо на 45°"
         case .exporting:
             return "Обработка и сборка 3D анатомической модели..."
         case .finished:
@@ -144,6 +144,8 @@ public final class ScannerSession: NSObject, ObservableObject {
     
     private var lastBurstCaptureTime: Date?
     private var isCapturingStage: Bool = false
+    private var stageCooldownUntil: Date = Date()
+    private var holdStartTime: Date?
     
     override private init() {
         super.init()
@@ -179,6 +181,8 @@ public final class ScannerSession: NSObject, ObservableObject {
         isCapturingStage = false
         depthAccumulator.reset()
         distanceMeters = 0.0
+        holdStartTime = nil
+        stageCooldownUntil = Date()
         
         let config = ARFaceTrackingConfiguration()
         config.isLightEstimationEnabled = true
@@ -197,6 +201,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         currentBurstCount = 0
         lastBurstCaptureTime = nil
         lastKnownFaceAnchor = nil
+        holdStartTime = nil
         depthAccumulator.reset()
     }
     
@@ -216,22 +221,22 @@ public final class ScannerSession: NSObject, ObservableObject {
         completionHaptic.impactOccurred()
     }
     
-    private func evaluateStageCondition(yaw: Float, distance: Float, camPosInHead: simd_float3) -> Bool {
+    private func evaluateStageCondition(yaw: Float, distance: Float) -> Bool {
         guard distance >= 0.16 && distance <= 0.46 else {
             return false
         }
         
         switch currentStage {
         case .centerFace:
-            return abs(yaw) <= 15.0
+            return abs(yaw) <= 10.0
         case .turnHeadLeftPartial:
-            return (yaw <= -10.0 || camPosInHead.x >= 0.030)
+            return yaw <= -16.0 && yaw >= -32.0
         case .turnHeadLeftFull:
-            return (yaw <= -22.0 || camPosInHead.x >= 0.045)
+            return yaw <= -38.0
         case .turnHeadRightPartial:
-            return (yaw >= 10.0 || camPosInHead.x <= -0.030)
+            return yaw >= 16.0 && yaw <= 32.0
         case .turnHeadRightFull:
-            return (yaw >= 22.0 || camPosInHead.x <= -0.045)
+            return yaw >= 38.0
         default:
             return false
         }
@@ -303,23 +308,25 @@ public final class ScannerSession: NSObject, ObservableObject {
     private func proceedAfterCapture(completedStage: ScanStage) {
         currentBurstCount = 0
         lastBurstCaptureTime = nil
+        holdStartTime = nil
         targetHoldProgress = 0.0
         isCapturingStage = false
         depthAccumulator.reset()
+        stageCooldownUntil = Date().addingTimeInterval(1.3)
         
         switch completedStage {
         case .centerFace:
             currentStage = .turnHeadLeftPartial
-            speak("Отлично. Теперь отведите телефон немного влево к уху")
+            speak("Отлично. Теперь поверните голову немного влево на 25 градусов")
         case .turnHeadLeftPartial:
             currentStage = .turnHeadLeftFull
-            speak("Зафиксировано. Направьте камеру прямо на левое ухо с расстояния 25 сантиметров")
+            speak("Зафиксировано. Теперь поверните голову дальше влево до профиля уха")
         case .turnHeadLeftFull:
             currentStage = .turnHeadRightPartial
-            speak("Отлично. Теперь перейдите к правому уху")
+            speak("Отлично. Теперь поверните голову вправо на 25 градусов")
         case .turnHeadRightPartial:
             currentStage = .turnHeadRightFull
-            speak("Зафиксировано. Направьте камеру прямо на правое ухо с расстояния 25 сантиметров")
+            speak("Зафиксировано. Теперь поверните голову дальше вправо до профиля уха")
         case .turnHeadRightFull:
             finishAndExport()
         default:
@@ -409,6 +416,7 @@ extension ScannerSession: ARSessionDelegate {
                 }
                 self.currentBurstCount = 0
                 self.lastBurstCaptureTime = nil
+                self.holdStartTime = nil
                 self.targetHoldProgress = 0.0
                 self.depthAccumulator.reset()
                 return
@@ -430,11 +438,6 @@ extension ScannerSession: ARSessionDelegate {
             self.currentYaw = yaw
             self.currentPitch = pitch
             
-            let worldToHead = anchor.transform.inverse
-            let cameraToHead = simd_mul(worldToHead, camTransform)
-            let camPosInHead4 = simd_mul(cameraToHead, simd_float4(0, 0, 0, 1))
-            let camPosInHead = simd_float3(camPosInHead4.x, camPosInHead4.y, camPosInHead4.z)
-            
             guard self.currentStage == .centerFace ||
                     self.currentStage == .turnHeadLeftPartial ||
                     self.currentStage == .turnHeadLeftFull ||
@@ -445,36 +448,57 @@ extension ScannerSession: ARSessionDelegate {
             
             guard !self.isCapturingStage else { return }
             
-            let isConditionMet = self.evaluateStageCondition(yaw: yaw, distance: currentDist, camPosInHead: camPosInHead)
+            let now = Date()
+            guard now >= self.stageCooldownUntil else {
+                self.currentBurstCount = 0
+                self.holdStartTime = nil
+                self.targetHoldProgress = 0.0
+                return
+            }
+            
+            let isConditionMet = self.evaluateStageCondition(yaw: yaw, distance: currentDist)
             
             if isConditionMet {
-                let now = Date()
-                let interval: TimeInterval = 0.06
-                let shouldCapture: Bool
-                if let lastTime = self.lastBurstCaptureTime {
-                    shouldCapture = now.timeIntervalSince(lastTime) >= interval
+                if let start = self.holdStartTime {
+                    let holdDuration = now.timeIntervalSince(start)
+                    let requiredHold: TimeInterval = 0.40
+                    
+                    if holdDuration < requiredHold {
+                        self.targetHoldProgress = Float(holdDuration / requiredHold)
+                        return
+                    }
+                    
+                    let interval: TimeInterval = 0.06
+                    let shouldCapture: Bool
+                    if let lastTime = self.lastBurstCaptureTime {
+                        shouldCapture = now.timeIntervalSince(lastTime) >= interval
+                    } else {
+                        shouldCapture = true
+                    }
+                    
+                    if shouldCapture && self.currentBurstCount < self.targetBurstCount {
+                        if let depth = frame.capturedDepthData ?? self.latestDepthData {
+                            self.depthAccumulator.addFrame(depthData: depth)
+                        }
+                        self.currentBurstCount += 1
+                        self.lastBurstCaptureTime = now
+                        self.targetHoldProgress = Float(self.currentBurstCount) / Float(self.targetBurstCount)
+                        
+                        self.lightTapGenerator.prepare()
+                        self.lightTapGenerator.impactOccurred()
+                        
+                        if self.currentBurstCount >= self.targetBurstCount {
+                            self.handleStageCompletion(frame: frame, faceAnchor: anchor)
+                        }
+                    }
                 } else {
-                    shouldCapture = true
-                }
-                
-                if shouldCapture && self.currentBurstCount < self.targetBurstCount {
-                    if let depth = frame.capturedDepthData ?? self.latestDepthData {
-                        self.depthAccumulator.addFrame(depthData: depth)
-                    }
-                    self.currentBurstCount += 1
-                    self.lastBurstCaptureTime = now
-                    self.targetHoldProgress = Float(self.currentBurstCount) / Float(self.targetBurstCount)
-                    
-                    self.lightTapGenerator.prepare()
-                    self.lightTapGenerator.impactOccurred()
-                    
-                    if self.currentBurstCount >= self.targetBurstCount {
-                        self.handleStageCompletion(frame: frame, faceAnchor: anchor)
-                    }
+                    self.holdStartTime = now
+                    self.targetHoldProgress = 0.05
                 }
             } else {
                 self.currentBurstCount = 0
                 self.lastBurstCaptureTime = nil
+                self.holdStartTime = nil
                 self.targetHoldProgress = 0.0
                 self.depthAccumulator.reset()
             }

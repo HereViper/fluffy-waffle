@@ -281,7 +281,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         )
         CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
         
-        let liquidGlass = self.isLiquidGlassEnabled
+        let liquidGlass = true
         let currentScanStage = stage
         let depthToUse = frame.capturedDepthData ?? self.latestDepthData
         
@@ -360,7 +360,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         let count = snaps.reduce(0) { $0 + $1.mesh.vertices.count }
         self.totalVerticesCount = count
         
-        let liquidGlass = self.isLiquidGlassEnabled
+        let liquidGlass = true
         Task.detached(priority: .userInitiated) {
             do {
                 let zipURL = try ModelExporter.shared.exportScanPackage(

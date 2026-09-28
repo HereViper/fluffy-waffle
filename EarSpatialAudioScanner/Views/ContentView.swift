@@ -61,9 +61,20 @@ public struct ContentView: View {
                         .labelsHidden()
                         .toggleStyle(SwitchToggleStyle(tint: .orange))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .glassEffect(.regular.tint(.orange).interactive())
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.orange.opacity(0.4), Color.orange.opacity(0.1)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 0.8
+                        )
+                )
             }
             
             Text(scanner.currentStage.title)

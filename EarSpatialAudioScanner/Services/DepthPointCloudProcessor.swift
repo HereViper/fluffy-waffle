@@ -17,8 +17,8 @@ public final class DepthPointCloudProcessor {
     public func processFrame(
         frame: ARFrame,
         faceAnchor: ARFaceAnchor,
-        step: Int = 2,
-        maxHeadRadius: Float = 0.25
+        step: Int = 3,
+        maxHeadRadius: Float = 0.22
     ) -> [ScannedVertex] {
         guard let rawDepthData = frame.capturedDepthData else {
             return []

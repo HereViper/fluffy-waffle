@@ -157,15 +157,18 @@ public final class ScannerSession: NSObject, ObservableObject {
         let yaw = currentYaw
         let pitch = currentPitch
         
-        let ciImage = CIImage(cvPixelBuffer: frame.capturedImage)
+        let pixelBuffer = frame.capturedImage
+        CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let jpegData = self.ciContext.jpegRepresentation(
             of: ciImage,
             colorSpace: CGColorSpaceCreateDeviceRGB(),
             options: [:]
         )
+        CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
         
         Task.detached(priority: .userInitiated) {
-            let vertices = DepthPointCloudProcessor.shared.processFrame(frame: frame, faceAnchor: faceAnchor, step: 2)
+            let vertices = DepthPointCloudProcessor.shared.processFrame(frame: frame, faceAnchor: faceAnchor, step: 3)
             let snapName: String
             switch stage {
             case .centerFace: snapName = "1_front_face"

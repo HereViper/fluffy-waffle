@@ -1,8 +1,8 @@
 import SwiftUI
+import UIKit
 
 public struct ContentView: View {
     @StateObject private var scanner = ScannerSession.shared
-    @State private var showingShareSheet = false
     
     public init() {}
     
@@ -13,7 +13,7 @@ public struct ContentView: View {
             if scanner.currentStage != .idle && scanner.currentStage != .unsupported {
                 CameraPreviewView(session: scanner.session)
                     .edgesIgnoringSafeArea(.all)
-                    .opacity(scanner.currentStage == .exporting ? 0.3 : 1.0)
+                    .opacity(scanner.currentStage == .exporting ? 0.2 : 1.0)
             }
             
             VStack(spacing: 16) {
@@ -31,16 +31,6 @@ public struct ContentView: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 14)
-        }
-        .sheet(isPresented: $showingShareSheet) {
-            if let zipURL = scanner.exportedZipURL {
-                ShareSheet(activityItems: [zipURL])
-            }
-        }
-        .onReceive(scanner.$exportedZipURL) { url in
-            if url != nil {
-                showingShareSheet = true
-            }
         }
     }
     
@@ -188,7 +178,7 @@ public struct ContentView: View {
                     ProgressView()
                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
                         .scaleEffect(1.3)
-                    Text("Генерация OBJ и PLY файлов...")
+                    Text("Формирование 3D-модели (OBJ / PLY)...")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(.white.opacity(0.8))
                 }
@@ -209,26 +199,20 @@ public struct ContentView: View {
                             .background(Color.white)
                             .cornerRadius(14)
                         }
-                    } else {
+                        
                         Button(action: {
-                            showingShareSheet = true
+                            presentSystemShare(url: zipURL)
                         }) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "square.and.arrow.up")
-                                Text("Поделиться архивом (ZIP)")
-                            }
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(.black)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 52)
-                            .background(Color.white)
-                            .cornerRadius(14)
+                            Text("Сохранить в «Файлы» / Отправить")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(.white)
+                                .padding(.vertical, 4)
                         }
                     }
                     
-                    Text("Файл также сохранен в папку приложения (доступен через провод USB на ПК)")
+                    Text("Все файлы также сохранены в папке Documents:\nEarScan_Results и SpatialAudio_EarScan.zip\n(доступны через USB кабель на ПК)")
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
                     
                     Button(action: {
@@ -236,7 +220,7 @@ public struct ContentView: View {
                     }) {
                         Text("Сканировать заново")
                             .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.white.opacity(0.7))
+                            .foregroundColor(.white.opacity(0.6))
                     }
                 }
                 
@@ -302,5 +286,26 @@ public struct ContentView: View {
         default:
             return .white
         }
+    }
+    
+    private func presentSystemShare(url: URL) {
+        let scenes = UIApplication.shared.connectedScenes
+        guard let windowScene = scenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene ?? scenes.first as? UIWindowScene,
+              let rootVC = windowScene.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            return
+        }
+        
+        let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        if let popover = activityVC.popoverPresentationController {
+            popover.sourceView = rootVC.view
+            popover.sourceRect = CGRect(x: rootVC.view.bounds.midX, y: rootVC.view.bounds.midY, width: 0, height: 0)
+            popover.permittedArrowDirections = []
+        }
+        
+        var topController = rootVC
+        while let presented = topController.presentedViewController {
+            topController = presented
+        }
+        topController.present(activityVC, animated: true)
     }
 }

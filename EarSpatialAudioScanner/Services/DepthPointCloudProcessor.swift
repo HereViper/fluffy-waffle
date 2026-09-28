@@ -394,30 +394,45 @@ public final class DepthPointCloudProcessor {
         }
         
         if liquidGlassSmoothing && cleanVertices.count > 4 {
-            var neighbors = [Set<Int>](repeating: Set<Int>(), count: cleanVertices.count)
+            var neighbors = [[Int]](repeating: [], count: cleanVertices.count)
             for tri in triangles {
-                let a = Int(tri.x)
-                let b = Int(tri.y)
-                let c = Int(tri.z)
-                neighbors[a].insert(b); neighbors[a].insert(c)
-                neighbors[b].insert(a); neighbors[b].insert(c)
-                neighbors[c].insert(a); neighbors[c].insert(b)
+                let a = Int(tri.x), b = Int(tri.y), c = Int(tri.z)
+                neighbors[a].append(b); neighbors[a].append(c)
+                neighbors[b].append(a); neighbors[b].append(c)
+                neighbors[c].append(a); neighbors[c].append(b)
+            }
+            
+            for i in 0..<cleanVertices.count {
+                neighbors[i] = Array(Set(neighbors[i]))
             }
             
             var positions = cleanVertices.map { $0.position }
-            for _ in 0..<4 {
-                var nextPos = positions
+            let lambda: Float = 0.50
+            let mu: Float = -0.53
+            let iterations = 20
+            
+            for _ in 0..<iterations {
+                var shrinkPos = positions
                 for i in 0..<cleanVertices.count {
                     let nbrs = neighbors[i]
                     guard !nbrs.isEmpty else { continue }
                     var sum = simd_float3(0, 0, 0)
-                    for n in nbrs {
-                        sum += positions[n]
-                    }
+                    for n in nbrs { sum += positions[n] }
                     let avg = sum / Float(nbrs.count)
-                    nextPos[i] = positions[i] + 0.35 * (avg - positions[i])
+                    shrinkPos[i] = positions[i] + lambda * (avg - positions[i])
                 }
-                positions = nextPos
+                positions = shrinkPos
+                
+                var expandPos = positions
+                for i in 0..<cleanVertices.count {
+                    let nbrs = neighbors[i]
+                    guard !nbrs.isEmpty else { continue }
+                    var sum = simd_float3(0, 0, 0)
+                    for n in nbrs { sum += positions[n] }
+                    let avg = sum / Float(nbrs.count)
+                    expandPos[i] = positions[i] + mu * (avg - positions[i])
+                }
+                positions = expandPos
             }
             
             for i in 0..<cleanVertices.count {
@@ -437,14 +452,15 @@ public final class DepthPointCloudProcessor {
         maxDiff: Float = 0.009
     ) -> [Float] {
         var output = input
-        let radius = 2
+        let radius = 3
         let spatialWeights: [[Float]] = {
-            var w = [[Float]](repeating: [Float](repeating: 0, count: 5), count: 5)
+            let size = radius * 2 + 1
+            var w = [[Float]](repeating: [Float](repeating: 0, count: size), count: size)
             let twoSigmaSq = 2.0 * spatialSigma * spatialSigma
-            for dy in -2...2 {
-                for dx in -2...2 {
+            for dy in -radius...radius {
+                for dx in -radius...radius {
                     let r2 = Float(dx * dx + dy * dy)
-                    w[dy + 2][dx + 2] = exp(-r2 / twoSigmaSq)
+                    w[dy + radius][dx + radius] = exp(-r2 / twoSigmaSq)
                 }
             }
             return w

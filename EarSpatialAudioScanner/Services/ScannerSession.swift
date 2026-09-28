@@ -422,19 +422,18 @@ extension ScannerSession: ARSessionDelegate {
                 return
             }
             
-            let camTransform = frame.camera.transform
-            let camToFace = simd_mul(camTransform.inverse, anchor.transform)
-            let facePosInCam = simd_float3(camToFace.columns.3.x, camToFace.columns.3.y, camToFace.columns.3.z)
-            let anchorDist = simd_length(facePosInCam)
+            let viewMatrix = frame.camera.viewMatrix(for: .portrait)
+            let faceInView = simd_mul(viewMatrix, anchor.transform)
+            let facePosInView = simd_float3(faceInView.columns.3.x, faceInView.columns.3.y, faceInView.columns.3.z)
+            let anchorDist = simd_length(facePosInView)
             
             let currentDist = measuredHwDist ?? anchorDist
             self.distanceMeters = currentDist
             self.isFaceDetected = (faceAnchor != nil)
             
-            let r02 = camToFace.columns.2.x
-            let r12 = camToFace.columns.2.y
-            let yaw = asin(max(min(r02, 1.0), -1.0)) * 180.0 / .pi
-            let pitch = asin(max(min(-r12, 1.0), -1.0)) * 180.0 / .pi
+            let fwd = faceInView.columns.2
+            let yaw = asin(max(min(fwd.x, 1.0), -1.0)) * 180.0 / .pi
+            let pitch = asin(max(min(fwd.y, 1.0), -1.0)) * 180.0 / .pi
             self.currentYaw = yaw
             self.currentPitch = pitch
             

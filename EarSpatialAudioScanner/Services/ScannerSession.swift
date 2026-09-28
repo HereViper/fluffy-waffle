@@ -205,15 +205,15 @@ public final class ScannerSession: NSObject, ObservableObject {
         
         switch currentStage {
         case .centerFace:
-            return abs(yaw) <= 10.0
+            return abs(yaw) <= 12.0
         case .turnHeadLeftPartial:
-            return yaw <= -16.0 && yaw >= -30.0
+            return abs(yaw) >= 15.0 && abs(yaw) <= 35.0
         case .turnHeadLeftFull:
-            return yaw <= -36.0
+            return abs(yaw) >= 30.0 && abs(yaw) <= 85.0
         case .turnHeadRightPartial:
-            return yaw >= 16.0 && yaw <= 30.0
+            return abs(yaw) >= 15.0 && abs(yaw) <= 35.0
         case .turnHeadRightFull:
-            return yaw >= 36.0
+            return abs(yaw) >= 30.0 && abs(yaw) <= 85.0
         default:
             return false
         }

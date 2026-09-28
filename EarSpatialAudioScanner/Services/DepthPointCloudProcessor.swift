@@ -284,7 +284,72 @@ public final class DepthPointCloudProcessor {
             return fallbackFaceGeometry(faceAnchor: faceAnchor)
         }
         
-        return ScannedMesh(vertices: vertices, triangles: triangles)
+        var smoothedVertices = vertices
+        applyTaubinSmoothing(
+            vertices: &smoothedVertices,
+            triangles: triangles,
+            iterations: liquidGlassSmoothing ? 6 : 4
+        )
+        
+        return ScannedMesh(vertices: smoothedVertices, triangles: triangles)
+    }
+    
+    private func applyTaubinSmoothing(
+        vertices: inout [ScannedVertex],
+        triangles: [simd_int3],
+        iterations: Int = 4,
+        lambda: Float = 0.5,
+        mu: Float = -0.53
+    ) {
+        guard !vertices.isEmpty && !triangles.isEmpty else { return }
+        
+        var neighbors: [[Int32]] = Array(repeating: [], count: vertices.count)
+        for tri in triangles {
+            let i0 = tri.x
+            let i1 = tri.y
+            let i2 = tri.z
+            guard i0 >= 0 && i1 >= 0 && i2 >= 0 &&
+                  i0 < vertices.count && i1 < vertices.count && i2 < vertices.count else { continue }
+            neighbors[Int(i0)].append(i1)
+            neighbors[Int(i0)].append(i2)
+            neighbors[Int(i1)].append(i0)
+            neighbors[Int(i1)].append(i2)
+            neighbors[Int(i2)].append(i0)
+            neighbors[Int(i2)].append(i1)
+        }
+        
+        var positions = vertices.map { $0.position }
+        var temp = positions
+        
+        for _ in 0..<iterations {
+            for i in 0..<positions.count {
+                let nbrs = neighbors[i]
+                guard !nbrs.isEmpty else { continue }
+                var sum = simd_float3(0, 0, 0)
+                for n in nbrs {
+                    sum += positions[Int(n)]
+                }
+                let avg = sum / Float(nbrs.count)
+                temp[i] = positions[i] + lambda * (avg - positions[i])
+            }
+            positions = temp
+            
+            for i in 0..<positions.count {
+                let nbrs = neighbors[i]
+                guard !nbrs.isEmpty else { continue }
+                var sum = simd_float3(0, 0, 0)
+                for n in nbrs {
+                    sum += positions[Int(n)]
+                }
+                let avg = sum / Float(nbrs.count)
+                temp[i] = positions[i] + mu * (avg - positions[i])
+            }
+            positions = temp
+        }
+        
+        for i in 0..<vertices.count {
+            vertices[i] = ScannedVertex(position: positions[i], color: vertices[i].color)
+        }
     }
     
     private func fallbackFaceGeometry(faceAnchor: ARFaceAnchor) -> ScannedMesh {

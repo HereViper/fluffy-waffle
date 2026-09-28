@@ -3,14 +3,17 @@ import ARKit
 import AVFoundation
 import AudioToolbox
 import UIKit
+import CoreImage
 import Combine
 
 public enum ScanStage: Equatable {
     case unsupported
     case idle
     case centerFace
-    case turnHeadLeft
-    case turnHeadRight
+    case turnHeadLeftPartial
+    case turnHeadLeftFull
+    case turnHeadRightPartial
+    case turnHeadRightFull
     case exporting
     case finished(URL)
     case error(String)
@@ -23,10 +26,14 @@ public enum ScanStage: Equatable {
             return "Нажмите «Начать сканирование»"
         case .centerFace:
             return "Расположите телефон перед лицом"
-        case .turnHeadLeft:
-            return "Поверните голову влево"
-        case .turnHeadRight:
-            return "Поверните голову вправо"
+        case .turnHeadLeftPartial:
+            return "Поверните голову немного влево (раковина)"
+        case .turnHeadLeftFull:
+            return "Поверните голову влево до конца (профиль)"
+        case .turnHeadRightPartial:
+            return "Поверните голову немного вправо (раковина)"
+        case .turnHeadRightFull:
+            return "Поверните голову вправо до конца (профиль)"
         case .exporting:
             return "Генерация 3D модели и архива..."
         case .finished:
@@ -53,10 +60,11 @@ public final class ScannerSession: NSObject, ObservableObject {
     
     private let speechSynthesizer = AVSpeechSynthesizer()
     private let hapticGenerator = UIImpactFeedbackGenerator(style: .heavy)
+    private let ciContext = CIContext(options: nil)
     private var snapshots: [CaptureSnapshot] = []
     
     private var holdStartTime: Date?
-    private let holdDurationRequired: TimeInterval = 0.7
+    private let holdDurationRequired: TimeInterval = 0.6
     private var isCapturingStage: Bool = false
     
     override private init() {
@@ -93,7 +101,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         session.run(config, options: [.resetTracking, .removeExistingAnchors])
         
         currentStage = .centerFace
-        speak("Держите телефон перед лицом на расстоянии около сорока сантиметров")
+        speak("Держите телефон прямо перед лицом на расстоянии около сорока сантиметров")
     }
     
     public func stopScanning() {
@@ -126,11 +134,15 @@ public final class ScannerSession: NSObject, ObservableObject {
         
         switch currentStage {
         case .centerFace:
-            return abs(yaw) <= 12.0
-        case .turnHeadLeft:
-            return yaw <= -26.0
-        case .turnHeadRight:
-            return yaw >= 26.0
+            return abs(yaw) <= 10.0
+        case .turnHeadLeftPartial:
+            return yaw <= -16.0 && yaw >= -30.0
+        case .turnHeadLeftFull:
+            return yaw <= -36.0
+        case .turnHeadRightPartial:
+            return yaw >= 16.0 && yaw <= 30.0
+        case .turnHeadRightFull:
+            return yaw >= 36.0
         default:
             return false
         }
@@ -145,19 +157,28 @@ public final class ScannerSession: NSObject, ObservableObject {
         let yaw = currentYaw
         let pitch = currentPitch
         
+        let ciImage = CIImage(cvPixelBuffer: frame.capturedImage)
+        let jpegData = self.ciContext.jpegRepresentation(
+            of: ciImage,
+            colorSpace: CGColorSpaceCreateDeviceRGB(),
+            options: [:]
+        )
+        
         Task.detached(priority: .userInitiated) {
             let vertices = DepthPointCloudProcessor.shared.processFrame(frame: frame, faceAnchor: faceAnchor, step: 2)
             let snapName: String
             switch stage {
-            case .centerFace: snapName = "front_face"
-            case .turnHeadLeft: snapName = "turn_left_ear"
-            case .turnHeadRight: snapName = "turn_right_ear"
+            case .centerFace: snapName = "1_front_face"
+            case .turnHeadLeftPartial: snapName = "2_left_ear_angle_3_4"
+            case .turnHeadLeftFull: snapName = "3_left_ear_profile"
+            case .turnHeadRightPartial: snapName = "4_right_ear_angle_3_4"
+            case .turnHeadRightFull: snapName = "5_right_ear_profile"
             default: snapName = "scan"
             }
             
             let snapshot = CaptureSnapshot(
                 name: snapName,
-                imageBuffer: frame.capturedImage,
+                jpegData: jpegData,
                 vertices: vertices,
                 yawDegrees: yaw,
                 pitchDegrees: pitch
@@ -177,12 +198,18 @@ public final class ScannerSession: NSObject, ObservableObject {
         
         switch completedStage {
         case .centerFace:
-            currentStage = .turnHeadLeft
-            speak("Отлично. Теперь поверните голову влево")
-        case .turnHeadLeft:
-            currentStage = .turnHeadRight
-            speak("Зафиксировано. Теперь поверните голову вправо")
-        case .turnHeadRight:
+            currentStage = .turnHeadLeftPartial
+            speak("Отлично. Теперь поверните голову чуть-чуть влево")
+        case .turnHeadLeftPartial:
+            currentStage = .turnHeadLeftFull
+            speak("Зафиксировано. Теперь поверните голову влево до конца")
+        case .turnHeadLeftFull:
+            currentStage = .turnHeadRightPartial
+            speak("Отлично. Теперь поверните голову чуть-чуть вправо")
+        case .turnHeadRightPartial:
+            currentStage = .turnHeadRightFull
+            speak("Зафиксировано. Теперь поверните голову вправо до конца")
+        case .turnHeadRightFull:
             finishAndExport()
         default:
             break
@@ -206,8 +233,9 @@ public final class ScannerSession: NSObject, ObservableObject {
                 }
             } catch {
                 await MainActor.run {
-                    self.currentStage = .error(error.localizedDescription)
-                    self.speak("Произошла ошибка при сохранении файла")
+                    let errMsg = error.localizedDescription
+                    self.currentStage = .error(errMsg)
+                    self.speak("Ошибка: \(errMsg)")
                 }
             }
         }
@@ -238,7 +266,11 @@ extension ScannerSession: ARSessionDelegate {
             self.currentPitch = pitch
             self.distanceMeters = distance
             
-            guard self.currentStage == .centerFace || self.currentStage == .turnHeadLeft || self.currentStage == .turnHeadRight else {
+            guard self.currentStage == .centerFace ||
+                    self.currentStage == .turnHeadLeftPartial ||
+                    self.currentStage == .turnHeadLeftFull ||
+                    self.currentStage == .turnHeadRightPartial ||
+                    self.currentStage == .turnHeadRightFull else {
                 return
             }
             

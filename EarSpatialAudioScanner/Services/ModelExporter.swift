@@ -3,37 +3,102 @@ import UIKit
 import CoreImage
 import CoreVideo
 import simd
+import zlib
 
 public struct CaptureSnapshot {
     public let name: String
-    public let imageBuffer: CVPixelBuffer
+    public let jpegData: Data?
     public let vertices: [ScannedVertex]
     public let yawDegrees: Float
     public let pitchDegrees: Float
 }
 
+public enum SimpleZipWriter {
+    public static func createZip(entries: [(name: String, data: Data)], to outputURL: URL) throws {
+        var zipData = Data()
+        var centralDirectory = Data()
+        
+        for entry in entries {
+            let offset = UInt32(zipData.count)
+            let filenameData = entry.name.data(using: .utf8) ?? Data()
+            let filenameLength = UInt16(filenameData.count)
+            let uncompressedSize = UInt32(entry.data.count)
+            
+            var crc: UInt32 = 0
+            entry.data.withUnsafeBytes { rawBuffer in
+                if let ptr = rawBuffer.baseAddress?.assumingMemoryBound(to: Bytef.self) {
+                    crc = UInt32(crc32(0, ptr, uInt(entry.data.count)))
+                }
+            }
+            
+            zipData.append(contentsOf: [0x50, 0x4b, 0x03, 0x04])
+            zipData.append(contentsOf: [0x14, 0x00])
+            zipData.append(contentsOf: [0x00, 0x00])
+            zipData.append(contentsOf: [0x00, 0x00])
+            zipData.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+            zipData.append(contentsOf: withUnsafeBytes(of: crc.littleEndian, Array.init))
+            zipData.append(contentsOf: withUnsafeBytes(of: uncompressedSize.littleEndian, Array.init))
+            zipData.append(contentsOf: withUnsafeBytes(of: uncompressedSize.littleEndian, Array.init))
+            zipData.append(contentsOf: withUnsafeBytes(of: filenameLength.littleEndian, Array.init))
+            zipData.append(contentsOf: [0x00, 0x00])
+            zipData.append(filenameData)
+            zipData.append(entry.data)
+            
+            centralDirectory.append(contentsOf: [0x50, 0x4b, 0x01, 0x02])
+            centralDirectory.append(contentsOf: [0x14, 0x00])
+            centralDirectory.append(contentsOf: [0x14, 0x00])
+            centralDirectory.append(contentsOf: [0x00, 0x00])
+            centralDirectory.append(contentsOf: [0x00, 0x00])
+            centralDirectory.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+            centralDirectory.append(contentsOf: withUnsafeBytes(of: crc.littleEndian, Array.init))
+            centralDirectory.append(contentsOf: withUnsafeBytes(of: uncompressedSize.littleEndian, Array.init))
+            centralDirectory.append(contentsOf: withUnsafeBytes(of: uncompressedSize.littleEndian, Array.init))
+            centralDirectory.append(contentsOf: withUnsafeBytes(of: filenameLength.littleEndian, Array.init))
+            centralDirectory.append(contentsOf: [0x00, 0x00])
+            centralDirectory.append(contentsOf: [0x00, 0x00])
+            centralDirectory.append(contentsOf: [0x00, 0x00])
+            centralDirectory.append(contentsOf: [0x00, 0x00])
+            centralDirectory.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+            centralDirectory.append(contentsOf: withUnsafeBytes(of: offset.littleEndian, Array.init))
+            centralDirectory.append(filenameData)
+        }
+        
+        let cdOffset = UInt32(zipData.count)
+        let cdSize = UInt32(centralDirectory.count)
+        let totalEntries = UInt16(entries.count)
+        
+        zipData.append(centralDirectory)
+        
+        zipData.append(contentsOf: [0x50, 0x4b, 0x05, 0x06])
+        zipData.append(contentsOf: [0x00, 0x00])
+        zipData.append(contentsOf: [0x00, 0x00])
+        zipData.append(contentsOf: withUnsafeBytes(of: totalEntries.littleEndian, Array.init))
+        zipData.append(contentsOf: withUnsafeBytes(of: totalEntries.littleEndian, Array.init))
+        zipData.append(contentsOf: withUnsafeBytes(of: cdSize.littleEndian, Array.init))
+        zipData.append(contentsOf: withUnsafeBytes(of: cdOffset.littleEndian, Array.init))
+        zipData.append(contentsOf: [0x00, 0x00])
+        
+        try zipData.write(to: outputURL, options: .atomic)
+    }
+}
+
 public final class ModelExporter {
     public static let shared = ModelExporter()
-    private let ciContext = CIContext(options: nil)
     
     private init() {}
     
     public func exportScanPackage(
         snapshots: [CaptureSnapshot]
     ) throws -> URL {
-        let fileManager = FileManager.default
-        let tempDir = fileManager.temporaryDirectory.appendingPathComponent("ScanPackage_\(UUID().uuidString)", isDirectory: true)
-        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true, attributes: nil)
-        
         var allVertices: [ScannedVertex] = []
         var snapshotMetadata: [[String: Any]] = []
+        var zipEntries: [(name: String, data: Data)] = []
         
         for snap in snapshots {
             allVertices.append(contentsOf: snap.vertices)
             
-            let photoURL = tempDir.appendingPathComponent("\(snap.name).jpg")
-            if let jpegData = convertPixelBufferToJPEG(pixelBuffer: snap.imageBuffer) {
-                try? jpegData.write(to: photoURL)
+            if let photoData = snap.jpegData {
+                zipEntries.append((name: "\(snap.name).jpg", data: photoData))
             }
             
             snapshotMetadata.append([
@@ -44,11 +109,11 @@ public final class ModelExporter {
             ])
         }
         
-        let objURL = tempDir.appendingPathComponent("ear_head_scan.obj")
-        try writeOBJ(vertices: allVertices, to: objURL)
+        let objData = generateOBJData(vertices: allVertices)
+        zipEntries.append((name: "ear_head_scan.obj", data: objData))
         
-        let plyURL = tempDir.appendingPathComponent("ear_head_scan.ply")
-        try writePLY(vertices: allVertices, to: plyURL)
+        let plyData = generatePLYData(vertices: allVertices)
+        zipEntries.append((name: "ear_head_scan.ply", data: plyData))
         
         var minBound = simd_float3(repeating: Float.greatestFiniteMagnitude)
         var maxBound = simd_float3(repeating: -Float.greatestFiniteMagnitude)
@@ -72,46 +137,22 @@ public final class ModelExporter {
             "snapshots": snapshotMetadata
         ]
         
-        let metaURL = tempDir.appendingPathComponent("scan_metadata.json")
         let jsonData = try JSONSerialization.data(withJSONObject: metadata, options: [.prettyPrinted])
-        try jsonData.write(to: metaURL)
+        zipEntries.append((name: "scan_metadata.json", data: jsonData))
         
+        let fileManager = FileManager.default
         let documentsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
         let timestamp = Int(Date().timeIntervalSince1970)
         let finalZipURL = documentsDir.appendingPathComponent("SpatialAudio_EarScan_\(timestamp).zip")
         
-        var zipError: NSError?
-        var coordinationError: NSError?
-        let coordinator = NSFileCoordinator()
-        
-        coordinator.coordinate(readingItemAt: tempDir, options: .forUploading, error: &coordinationError) { zippedTempURL in
-            do {
-                if fileManager.fileExists(atPath: finalZipURL.path) {
-                    try fileManager.removeItem(at: finalZipURL)
-                }
-                try fileManager.copyItem(at: zippedTempURL, to: finalZipURL)
-            } catch let err as NSError {
-                zipError = err
-            }
-        }
-        
-        try? fileManager.removeItem(at: tempDir)
-        
-        if let err = coordinationError ?? zipError {
-            throw err
-        }
+        try SimpleZipWriter.createZip(entries: zipEntries, to: finalZipURL)
         
         return finalZipURL
     }
     
-    private func convertPixelBufferToJPEG(pixelBuffer: CVPixelBuffer) -> Data? {
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        return ciContext.jpegRepresentation(of: ciImage, colorSpace: CGColorSpaceCreateDeviceRGB(), options: [:])
-    }
-    
-    private func writeOBJ(vertices: [ScannedVertex], to url: URL) throws {
+    private func generateOBJData(vertices: [ScannedVertex]) -> Data {
         var content = "# iOS Face ID TrueDepth Spatial Audio Scan\n# Vertices count: \(vertices.count)\n"
-        content.reserveCapacity(vertices.count * 60)
+        content.reserveCapacity(vertices.count * 50)
         
         for v in vertices {
             let line = String(
@@ -122,10 +163,10 @@ public final class ModelExporter {
             content.append(line)
         }
         
-        try content.write(to: url, atomically: true, encoding: .utf8)
+        return content.data(using: .utf8) ?? Data()
     }
     
-    private func writePLY(vertices: [ScannedVertex], to url: URL) throws {
+    private func generatePLYData(vertices: [ScannedVertex]) -> Data {
         var content = """
         ply
         format ascii 1.0
@@ -139,7 +180,7 @@ public final class ModelExporter {
         property uchar blue
         end_header\n
         """
-        content.reserveCapacity(vertices.count * 50)
+        content.reserveCapacity(vertices.count * 45)
         
         for v in vertices {
             let r = UInt8(min(max(v.color.x * 255.0, 0.0), 255.0))
@@ -153,6 +194,6 @@ public final class ModelExporter {
             content.append(line)
         }
         
-        try content.write(to: url, atomically: true, encoding: .utf8)
+        return content.data(using: .utf8) ?? Data()
     }
 }

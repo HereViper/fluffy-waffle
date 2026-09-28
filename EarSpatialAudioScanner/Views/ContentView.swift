@@ -16,14 +16,12 @@ public struct ContentView: View {
                     .opacity(scanner.currentStage == .exporting ? 0.3 : 1.0)
             }
             
-            VStack(spacing: 20) {
+            VStack(spacing: 16) {
                 headerView
                 
                 Spacer()
                 
-                if scanner.currentStage == .centerFace ||
-                    scanner.currentStage == .turnHeadLeft ||
-                    scanner.currentStage == .turnHeadRight {
+                if isScanningActive {
                     targetAngleGuide
                 }
                 
@@ -31,8 +29,8 @@ public struct ContentView: View {
                 
                 bottomControlPanel
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
         .sheet(isPresented: $showingShareSheet) {
             if let zipURL = scanner.exportedZipURL {
@@ -43,6 +41,15 @@ public struct ContentView: View {
             if url != nil {
                 showingShareSheet = true
             }
+        }
+    }
+    
+    private var isScanningActive: Bool {
+        switch scanner.currentStage {
+        case .centerFace, .turnHeadLeftPartial, .turnHeadLeftFull, .turnHeadRightPartial, .turnHeadRightFull:
+            return true
+        default:
+            return false
         }
     }
     
@@ -80,7 +87,7 @@ public struct ContentView: View {
                 .cornerRadius(8)
             }
         }
-        .padding(.top, 8)
+        .padding(.top, 4)
     }
     
     private var targetAngleGuide: some View {
@@ -118,11 +125,19 @@ public struct ContentView: View {
             Image(systemName: "person.crop.circle")
                 .font(.system(size: 44, weight: .light))
                 .foregroundColor(.white)
-        case .turnHeadLeft:
+        case .turnHeadLeftPartial:
+            Image(systemName: "arrow.down.left.circle")
+                .font(.system(size: 48, weight: .bold))
+                .foregroundColor(.white)
+        case .turnHeadLeftFull:
             Image(systemName: "arrow.left.circle.fill")
                 .font(.system(size: 52, weight: .bold))
                 .foregroundColor(.white)
-        case .turnHeadRight:
+        case .turnHeadRightPartial:
+            Image(systemName: "arrow.down.right.circle")
+                .font(.system(size: 48, weight: .bold))
+                .foregroundColor(.white)
+        case .turnHeadRightFull:
             Image(systemName: "arrow.right.circle.fill")
                 .font(.system(size: 52, weight: .bold))
                 .foregroundColor(.white)
@@ -132,7 +147,7 @@ public struct ContentView: View {
     }
     
     private var bottomControlPanel: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 14) {
             switch scanner.currentStage {
             case .idle:
                 Button(action: {
@@ -147,11 +162,16 @@ public struct ContentView: View {
                         .cornerRadius(14)
                 }
                 
-            case .centerFace, .turnHeadLeft, .turnHeadRight:
-                HStack(spacing: 12) {
-                    stepBadge(index: 1, active: scanner.currentStage == .centerFace, text: "Центр")
-                    stepBadge(index: 2, active: scanner.currentStage == .turnHeadLeft, text: "Влево")
-                    stepBadge(index: 3, active: scanner.currentStage == .turnHeadRight, text: "Вправо")
+            case .centerFace, .turnHeadLeftPartial, .turnHeadLeftFull, .turnHeadRightPartial, .turnHeadRightFull:
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        stepBadge(index: 1, active: scanner.currentStage == .centerFace, text: "Центр")
+                        stepBadge(index: 2, active: scanner.currentStage == .turnHeadLeftPartial, text: "Лев. 3/4")
+                        stepBadge(index: 3, active: scanner.currentStage == .turnHeadLeftFull, text: "Лев. Профиль")
+                        stepBadge(index: 4, active: scanner.currentStage == .turnHeadRightPartial, text: "Прав. 3/4")
+                        stepBadge(index: 5, active: scanner.currentStage == .turnHeadRightFull, text: "Прав. Профиль")
+                    }
+                    .padding(.horizontal, 4)
                 }
                 
                 Button(action: {
@@ -160,7 +180,7 @@ public struct ContentView: View {
                     Text("Отмена")
                         .font(.system(size: 15, weight: .medium))
                         .foregroundColor(.white.opacity(0.8))
-                        .padding(.vertical, 8)
+                        .padding(.vertical, 4)
                 }
                 
             case .exporting:
@@ -176,19 +196,34 @@ public struct ContentView: View {
                 
             case .finished:
                 VStack(spacing: 12) {
-                    Button(action: {
-                        showingShareSheet = true
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "square.and.arrow.up")
-                            Text("Поделиться архивом (ZIP)")
+                    if let zipURL = scanner.exportedZipURL {
+                        ShareLink(item: zipURL) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "square.and.arrow.up")
+                                Text("Поделиться архивом (ZIP)")
+                            }
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(.black)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 52)
+                            .background(Color.white)
+                            .cornerRadius(14)
                         }
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.black)
-                        .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .background(Color.white)
-                        .cornerRadius(14)
+                    } else {
+                        Button(action: {
+                            showingShareSheet = true
+                        }) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "square.and.arrow.up")
+                                Text("Поделиться архивом (ZIP)")
+                            }
+                            .font(.system(size: 17, weight: .semibold))
+                            .foregroundColor(.black)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 52)
+                            .background(Color.white)
+                            .cornerRadius(14)
+                        }
                     }
                     
                     Text("Файл также сохранен в папку приложения (доступен через провод USB на ПК)")
@@ -240,25 +275,25 @@ public struct ContentView: View {
     private func stepBadge(index: Int, active: Bool, text: String) -> some View {
         HStack(spacing: 4) {
             Text("\(index)")
-                .font(.system(size: 12, weight: .bold))
+                .font(.system(size: 11, weight: .bold))
                 .foregroundColor(active ? .black : .white)
-                .frame(width: 20, height: 20)
+                .frame(width: 18, height: 18)
                 .background(active ? Color.white : Color.white.opacity(0.2))
                 .clipShape(Circle())
             
             Text(text)
-                .font(.system(size: 12, weight: active ? .semibold : .regular))
+                .font(.system(size: 11, weight: active ? .semibold : .regular))
                 .foregroundColor(active ? .white : .white.opacity(0.5))
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
         .background(active ? Color.white.opacity(0.2) : Color.clear)
-        .cornerRadius(10)
+        .cornerRadius(8)
     }
     
     private var stageColor: Color {
         switch scanner.currentStage {
-        case .centerFace, .turnHeadLeft, .turnHeadRight:
+        case .centerFace, .turnHeadLeftPartial, .turnHeadLeftFull, .turnHeadRightPartial, .turnHeadRightFull:
             return scanner.targetHoldProgress > 0 ? .green : .white
         case .finished:
             return .green

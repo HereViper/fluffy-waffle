@@ -50,36 +50,12 @@ public struct ContentView: View {
                     .font(.system(size: 19, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
                 
-                Spacer()
-                
-                Button(action: {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
-                        scanner.isLiquidGlassEnabled.toggle()
-                    }
-                }) {
-                    HStack(spacing: 5) {
-                        Image(systemName: scanner.isLiquidGlassEnabled ? "drop.fill" : "drop")
-                            .font(.system(size: 12))
-                            .foregroundColor(scanner.isLiquidGlassEnabled ? .cyan : .white.opacity(0.5))
-                        Text("Liquid Glass")
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
-                            .foregroundColor(scanner.isLiquidGlassEnabled ? .white : .white.opacity(0.6))
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(
-                        scanner.isLiquidGlassEnabled ?
-                            Color.cyan.opacity(0.22) : Color.white.opacity(0.12)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(
-                                scanner.isLiquidGlassEnabled ?
-                                    Color.cyan.opacity(0.7) : Color.white.opacity(0.2),
-                                lineWidth: 1
-                            )
-                    )
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                HStack(spacing: 8) {
+                    Text("Liquid Glass")
+                        .font(.system(size: 13, weight: .semibold, design: .rounded))
+                        .foregroundColor(scanner.isLiquidGlassEnabled ? .white : .white.opacity(0.6))
+                    
+                    LiquidGlassToggle(isOn: $scanner.isLiquidGlassEnabled)
                 }
             }
             

@@ -14,6 +14,7 @@
 		EA0100200000000000000005 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0100100000000000000005 /* ContentView.swift */; };
 		EA0100200000000000000006 /* CameraPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0100100000000000000006 /* CameraPreviewView.swift */; };
 		EA0100200000000000000007 /* ShareSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0100100000000000000007 /* ShareSheet.swift */; };
+		EA0100200000000000000010 /* LiquidGlassToggle.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA0100100000000000000010 /* LiquidGlassToggle.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +25,7 @@
 		EA0100100000000000000005 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		EA0100100000000000000006 /* CameraPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraPreviewView.swift; sourceTree = "<group>"; };
 		EA0100100000000000000007 /* ShareSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareSheet.swift; sourceTree = "<group>"; };
+		EA0100100000000000000010 /* LiquidGlassToggle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiquidGlassToggle.swift; sourceTree = "<group>"; };
 		EA0100100000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		EA0100100000000000000009 /* EarSpatialAudioScanner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = EarSpatialAudioScanner.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -74,6 +76,7 @@
 				EA0100100000000000000005 /* ContentView.swift */,
 				EA0100100000000000000006 /* CameraPreviewView.swift */,
 				EA0100100000000000000007 /* ShareSheet.swift */,
+				EA0100100000000000000010 /* LiquidGlassToggle.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -160,6 +163,7 @@
 				EA0100200000000000000005 /* ContentView.swift in Sources */,
 				EA0100200000000000000006 /* CameraPreviewView.swift in Sources */,
 				EA0100200000000000000007 /* ShareSheet.swift in Sources */,
+				EA0100200000000000000010 /* LiquidGlassToggle.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

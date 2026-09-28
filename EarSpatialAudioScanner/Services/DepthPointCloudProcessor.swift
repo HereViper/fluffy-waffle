@@ -83,9 +83,9 @@ public final class DepthPointCloudProcessor {
             input: rawDepthBuffer,
             width: depthWidth,
             height: depthHeight,
-            spatialSigma: liquidGlassSmoothing ? 1.4 : 1.2,
-            rangeSigma: liquidGlassSmoothing ? 0.003 : 0.0025,
-            maxDiff: liquidGlassSmoothing ? 0.005 : 0.004
+            spatialSigma: liquidGlassSmoothing ? 1.8 : 1.5,
+            rangeSigma: liquidGlassSmoothing ? 0.006 : 0.005,
+            maxDiff: liquidGlassSmoothing ? 0.010 : 0.008
         )
         
         let intrinsics: simd_float3x3
@@ -185,20 +185,20 @@ public final class DepthPointCloudProcessor {
                 let headPoint = simd_mul(cameraToHead, camPoint)
                 let headPos = simd_float3(headPoint.x, headPoint.y, headPoint.z)
                 
-                guard headPos.y >= -0.052 && headPos.y <= 0.052 else {
+                guard headPos.y >= -0.07 && headPos.y <= 0.07 else {
                     continue
                 }
-                guard headPos.z >= -0.075 && headPos.z <= 0.015 else {
+                guard headPos.z >= -0.09 && headPos.z <= 0.03 else {
                     continue
                 }
                 
                 if isRightEar {
-                    guard headPos.x >= 0.048 && headPos.x <= 0.105 else { continue }
+                    guard headPos.x >= 0.035 && headPos.x <= 0.115 else { continue }
                 } else {
-                    guard headPos.x <= -0.048 && headPos.x >= -0.105 else { continue }
+                    guard headPos.x <= -0.035 && headPos.x >= -0.115 else { continue }
                 }
                 
-                guard simd_distance(headPos, earCenter) <= 0.055 else {
+                guard simd_distance(headPos, earCenter) <= 0.08 else {
                     continue
                 }
                 
@@ -241,8 +241,8 @@ public final class DepthPointCloudProcessor {
             gridY += 1
         }
         
-        let maxEdgeDistHead: Float = 0.008
-        let maxDepthJumpCam: Float = 0.005
+        let maxEdgeDistHead: Float = 0.014
+        let maxDepthJumpCam: Float = 0.010
         
         var rawTriangles: [simd_int3] = []
         rawTriangles.reserveCapacity(tempVertices.count * 2)
@@ -275,7 +275,7 @@ public final class DepthPointCloudProcessor {
             let triCenter = (vA.camPos + vB.camPos + vC.camPos) / 3.0
             let viewDir = simd_normalize(triCenter)
             let cosAngle = abs(simd_dot(nCam, viewDir))
-            return cosAngle >= 0.20
+            return cosAngle >= 0.12
         }
         
         for gy in 0..<(gridRows - 1) {
@@ -325,6 +325,70 @@ public final class DepthPointCloudProcessor {
             }
         }
         
+        if cleanVertices.count > 20 {
+            var adjacency = [[Int]](repeating: [], count: cleanVertices.count)
+            for tri in triangles {
+                let a = Int(tri.x), b = Int(tri.y), c = Int(tri.z)
+                adjacency[a].append(b); adjacency[a].append(c)
+                adjacency[b].append(a); adjacency[b].append(c)
+                adjacency[c].append(a); adjacency[c].append(b)
+            }
+            
+            var componentId = [Int](repeating: -1, count: cleanVertices.count)
+            var componentSizes: [Int] = []
+            var currentId = 0
+            
+            for start in 0..<cleanVertices.count {
+                guard componentId[start] == -1 else { continue }
+                var stack = [start]
+                var size = 0
+                while !stack.isEmpty {
+                    let v = stack.removeLast()
+                    guard componentId[v] == -1 else { continue }
+                    componentId[v] = currentId
+                    size += 1
+                    for nb in adjacency[v] where componentId[nb] == -1 {
+                        stack.append(nb)
+                    }
+                }
+                componentSizes.append(size)
+                currentId += 1
+            }
+            
+            let minComponentSize = max(20, cleanVertices.count / 8)
+            var keepVertex = [Bool](repeating: false, count: cleanVertices.count)
+            for i in 0..<cleanVertices.count {
+                let cid = componentId[i]
+                if cid >= 0 && componentSizes[cid] >= minComponentSize {
+                    keepVertex[i] = true
+                }
+            }
+            
+            var remap2 = [Int32](repeating: -1, count: cleanVertices.count)
+            var filteredVertices: [ScannedVertex] = []
+            filteredVertices.reserveCapacity(cleanVertices.count)
+            for i in 0..<cleanVertices.count {
+                if keepVertex[i] {
+                    remap2[i] = Int32(filteredVertices.count)
+                    filteredVertices.append(cleanVertices[i])
+                }
+            }
+            
+            var filteredTriangles: [simd_int3] = []
+            filteredTriangles.reserveCapacity(triangles.count)
+            for tri in triangles {
+                let a = remap2[Int(tri.x)]
+                let b = remap2[Int(tri.y)]
+                let c = remap2[Int(tri.z)]
+                if a >= 0 && b >= 0 && c >= 0 {
+                    filteredTriangles.append(simd_int3(a, b, c))
+                }
+            }
+            
+            cleanVertices = filteredVertices
+            triangles = filteredTriangles
+        }
+        
         if cleanVertices.isEmpty {
             return fallbackFaceGeometry(faceAnchor: faceAnchor)
         }
@@ -341,7 +405,7 @@ public final class DepthPointCloudProcessor {
             }
             
             var positions = cleanVertices.map { $0.position }
-            for _ in 0..<2 {
+            for _ in 0..<4 {
                 var nextPos = positions
                 for i in 0..<cleanVertices.count {
                     let nbrs = neighbors[i]
@@ -351,7 +415,7 @@ public final class DepthPointCloudProcessor {
                         sum += positions[n]
                     }
                     let avg = sum / Float(nbrs.count)
-                    nextPos[i] = positions[i] + 0.32 * (avg - positions[i])
+                    nextPos[i] = positions[i] + 0.35 * (avg - positions[i])
                 }
                 positions = nextPos
             }

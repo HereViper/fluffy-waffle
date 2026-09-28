@@ -129,7 +129,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     @Published public var isLiquidGlassEnabled: Bool = true
     
     @Published public private(set) var currentBurstCount: Int = 0
-    public let targetBurstCount: Int = 3
+    public let targetBurstCount: Int = 5
     
     public let session = ARSession()
     

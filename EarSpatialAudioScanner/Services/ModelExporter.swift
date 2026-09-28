@@ -115,19 +115,14 @@ public final class ModelExporter {
         try? fileManager.removeItem(at: resultsDir)
         try fileManager.createDirectory(at: resultsDir, withIntermediateDirectories: true)
         
-        var allVertices: [ScannedVertex] = []
-        var allTriangles: [simd_int3] = []
         var snapshotMetadata: [[String: Any]] = []
         var zipEntries: [(name: String, data: Data)] = []
         
+        var faceMesh: ScannedMesh?
+        var rightEarMesh: ScannedMesh?
+        var leftEarMesh: ScannedMesh?
+        
         for snap in snapshots {
-            let offset = Int32(allVertices.count)
-            allVertices.append(contentsOf: snap.mesh.vertices)
-            
-            for tri in snap.mesh.triangles {
-                allTriangles.append(tri &+ simd_int3(repeating: offset))
-            }
-            
             if !snap.mesh.vertices.isEmpty {
                 let sectorObjData = generateOBJData(vertices: snap.mesh.vertices, triangles: snap.mesh.triangles)
                 let sectorFileName = "\(snap.name).obj"
@@ -149,7 +144,71 @@ public final class ModelExporter {
                 "yaw_degrees": snap.yawDegrees,
                 "pitch_degrees": snap.pitchDegrees
             ])
+            
+            if snap.name.contains("front_face") {
+                faceMesh = snap.mesh
+            } else if snap.name.contains("right_ear_profile") {
+                if !snap.mesh.vertices.isEmpty {
+                    rightEarMesh = snap.mesh
+                }
+            } else if snap.name.contains("right_ear") && rightEarMesh == nil {
+                if !snap.mesh.vertices.isEmpty {
+                    rightEarMesh = snap.mesh
+                }
+            } else if snap.name.contains("left_ear_profile") {
+                if !snap.mesh.vertices.isEmpty {
+                    leftEarMesh = snap.mesh
+                }
+            } else if snap.name.contains("left_ear") && leftEarMesh == nil {
+                if !snap.mesh.vertices.isEmpty {
+                    leftEarMesh = snap.mesh
+                }
+            }
         }
+        
+        if let rEar = rightEarMesh, !rEar.vertices.isEmpty {
+            let rData = generateOBJData(vertices: rEar.vertices, triangles: rEar.triangles)
+            let rURL = resultsDir.appendingPathComponent("right_ear.obj")
+            try? rData.write(to: rURL)
+            zipEntries.append((name: "right_ear.obj", data: rData))
+        }
+        
+        if let lEar = leftEarMesh, !lEar.vertices.isEmpty {
+            let lData = generateOBJData(vertices: lEar.vertices, triangles: lEar.triangles)
+            let lURL = resultsDir.appendingPathComponent("left_ear.obj")
+            try? lData.write(to: lURL)
+            zipEntries.append((name: "left_ear.obj", data: lData))
+        }
+        
+        var unifiedVertices: [ScannedVertex] = []
+        var unifiedTriangles: [simd_int3] = []
+        
+        func appendMesh(_ mesh: ScannedMesh) {
+            let offset = Int32(unifiedVertices.count)
+            unifiedVertices.append(contentsOf: mesh.vertices)
+            for tri in mesh.triangles {
+                unifiedTriangles.append(tri &+ simd_int3(repeating: offset))
+            }
+        }
+        
+        if let f = faceMesh, !f.vertices.isEmpty {
+            appendMesh(f)
+        }
+        if let r = rightEarMesh, !r.vertices.isEmpty {
+            appendMesh(r)
+        }
+        if let l = leftEarMesh, !l.vertices.isEmpty {
+            appendMesh(l)
+        }
+        
+        if unifiedVertices.isEmpty {
+            for snap in snapshots {
+                appendMesh(snap.mesh)
+            }
+        }
+        
+        let allVertices = unifiedVertices
+        let allTriangles = unifiedTriangles
         
         let objData = generateOBJData(vertices: allVertices, triangles: allTriangles)
         let objURL = resultsDir.appendingPathComponent("ear_head_scan.obj")

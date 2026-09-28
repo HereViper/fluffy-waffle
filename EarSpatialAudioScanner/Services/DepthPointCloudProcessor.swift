@@ -83,9 +83,9 @@ public final class DepthPointCloudProcessor {
             input: rawDepthBuffer,
             width: depthWidth,
             height: depthHeight,
-            spatialSigma: liquidGlassSmoothing ? 2.0 : 1.5,
-            rangeSigma: liquidGlassSmoothing ? 0.005 : 0.004,
-            maxDiff: liquidGlassSmoothing ? 0.009 : 0.007
+            spatialSigma: liquidGlassSmoothing ? 1.4 : 1.2,
+            rangeSigma: liquidGlassSmoothing ? 0.003 : 0.0025,
+            maxDiff: liquidGlassSmoothing ? 0.005 : 0.004
         )
         
         let intrinsics: simd_float3x3
@@ -116,12 +116,30 @@ public final class DepthPointCloudProcessor {
         let cameraToWorld = frame.camera.transform
         let cameraToHead = simd_mul(worldToHead, cameraToWorld)
         
+        let isRightEar: Bool
+        switch stage {
+        case .turnHeadLeftPartial, .turnHeadLeftFull:
+            isRightEar = true
+        case .turnHeadRightPartial, .turnHeadRightFull:
+            isRightEar = false
+        default:
+            isRightEar = true
+        }
+        
+        let earCenter = simd_float3(isRightEar ? 0.072 : -0.072, 0.0, -0.025)
+        
         let gridCols = (depthWidth + step - 1) / step
         let gridRows = (depthHeight + step - 1) / step
         var gridIndices = [Int32](repeating: -1, count: gridCols * gridRows)
         
-        var vertices: [ScannedVertex] = []
-        vertices.reserveCapacity(gridCols * gridRows / 2)
+        struct TempVertex {
+            let headPos: simd_float3
+            let camPos: simd_float3
+            let color: simd_float3
+        }
+        
+        var tempVertices: [TempVertex] = []
+        tempVertices.reserveCapacity(gridCols * gridRows / 2)
         
         let pixelFormat = CVPixelBufferGetPixelFormatType(imageBuffer)
         let isYUV = (pixelFormat == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange ||
@@ -167,24 +185,21 @@ public final class DepthPointCloudProcessor {
                 let headPoint = simd_mul(cameraToHead, camPoint)
                 let headPos = simd_float3(headPoint.x, headPoint.y, headPoint.z)
                 
-                guard headPos.y >= -0.11 && headPos.y <= 0.10 else {
+                guard headPos.y >= -0.052 && headPos.y <= 0.052 else {
                     continue
                 }
-                guard headPos.z >= -0.13 && headPos.z <= 0.08 else {
-                    continue
-                }
-                let radialDistXZ = hypot(headPos.x, headPos.z)
-                guard radialDistXZ <= 0.155 else {
+                guard headPos.z >= -0.075 && headPos.z <= 0.015 else {
                     continue
                 }
                 
-                switch stage {
-                case .turnHeadLeftPartial, .turnHeadLeftFull:
-                    guard headPos.x >= 0.025 else { continue }
-                case .turnHeadRightPartial, .turnHeadRightFull:
-                    guard headPos.x <= -0.025 else { continue }
-                default:
-                    break
+                if isRightEar {
+                    guard headPos.x >= 0.048 && headPos.x <= 0.105 else { continue }
+                } else {
+                    guard headPos.x <= -0.048 && headPos.x >= -0.105 else { continue }
+                }
+                
+                guard simd_distance(headPos, earCenter) <= 0.055 else {
+                    continue
                 }
                 
                 let imgX = min(max(Int(u * imgScaleX), 0), imageWidth - 1)
@@ -215,16 +230,53 @@ public final class DepthPointCloudProcessor {
                     b = bVal
                 }
                 
-                let vertexIndex = Int32(vertices.count)
-                vertices.append(ScannedVertex(position: headPos, color: simd_float3(r, g, b)))
+                let vertexIndex = Int32(tempVertices.count)
+                tempVertices.append(TempVertex(
+                    headPos: headPos,
+                    camPos: simd_float3(xCam, yCam, zCam),
+                    color: simd_float3(r, g, b)
+                ))
                 gridIndices[gridY * gridCols + gridX] = vertexIndex
             }
             gridY += 1
         }
         
-        var triangles: [simd_int3] = []
-        triangles.reserveCapacity(vertices.count * 2)
-        let maxEdgeDistance: Float = 0.014
+        let maxEdgeDistHead: Float = 0.008
+        let maxDepthJumpCam: Float = 0.005
+        
+        var rawTriangles: [simd_int3] = []
+        rawTriangles.reserveCapacity(tempVertices.count * 2)
+        
+        func validateTriangle(iA: Int32, iB: Int32, iC: Int32) -> Bool {
+            let vA = tempVertices[Int(iA)]
+            let vB = tempVertices[Int(iB)]
+            let vC = tempVertices[Int(iC)]
+            
+            let dCamAB = abs(vA.camPos.z - vB.camPos.z)
+            let dCamBC = abs(vB.camPos.z - vC.camPos.z)
+            let dCamCA = abs(vC.camPos.z - vA.camPos.z)
+            guard dCamAB <= maxDepthJumpCam && dCamBC <= maxDepthJumpCam && dCamCA <= maxDepthJumpCam else {
+                return false
+            }
+            
+            guard simd_distance(vA.headPos, vB.headPos) <= maxEdgeDistHead &&
+                  simd_distance(vB.headPos, vC.headPos) <= maxEdgeDistHead &&
+                  simd_distance(vC.headPos, vA.headPos) <= maxEdgeDistHead else {
+                return false
+            }
+            
+            let edge1 = vB.camPos - vA.camPos
+            let edge2 = vC.camPos - vA.camPos
+            let normalCam = simd_cross(edge1, edge2)
+            let normalLen = simd_length(normalCam)
+            guard normalLen > 1e-6 else { return false }
+            let nCam = normalCam / normalLen
+            
+            let triCenter = (vA.camPos + vB.camPos + vC.camPos) / 3.0
+            let viewDir = simd_normalize(triCenter)
+            let cosAngle = abs(simd_dot(nCam, viewDir))
+            return cosAngle >= 0.20
+        }
         
         for gy in 0..<(gridRows - 1) {
             for gx in 0..<(gridCols - 1) {
@@ -233,37 +285,83 @@ public final class DepthPointCloudProcessor {
                 let iBL = gridIndices[(gy + 1) * gridCols + gx]
                 let iBR = gridIndices[(gy + 1) * gridCols + (gx + 1)]
                 
-                if iTL >= 0 && iTR >= 0 && iBL >= 0 {
-                    let pTL = vertices[Int(iTL)].position
-                    let pTR = vertices[Int(iTR)].position
-                    let pBL = vertices[Int(iBL)].position
-                    
-                    if simd_distance(pTL, pTR) <= maxEdgeDistance &&
-                        simd_distance(pTL, pBL) <= maxEdgeDistance &&
-                        simd_distance(pTR, pBL) <= maxEdgeDistance {
-                        triangles.append(simd_int3(iTL, iTR, iBL))
-                    }
+                if iTL >= 0 && iTR >= 0 && iBL >= 0 && validateTriangle(iA: iTL, iB: iTR, iC: iBL) {
+                    rawTriangles.append(simd_int3(iTL, iTR, iBL))
                 }
                 
-                if iTR >= 0 && iBR >= 0 && iBL >= 0 {
-                    let pTR = vertices[Int(iTR)].position
-                    let pBR = vertices[Int(iBR)].position
-                    let pBL = vertices[Int(iBL)].position
-                    
-                    if simd_distance(pTR, pBR) <= maxEdgeDistance &&
-                        simd_distance(pBL, pBR) <= maxEdgeDistance &&
-                        simd_distance(pTR, pBL) <= maxEdgeDistance {
-                        triangles.append(simd_int3(iTR, iBR, iBL))
-                    }
+                if iTR >= 0 && iBR >= 0 && iBL >= 0 && validateTriangle(iA: iTR, iB: iBR, iC: iBL) {
+                    rawTriangles.append(simd_int3(iTR, iBR, iBL))
                 }
             }
         }
         
-        if vertices.isEmpty {
+        var used = [Bool](repeating: false, count: tempVertices.count)
+        for tri in rawTriangles {
+            used[Int(tri.x)] = true
+            used[Int(tri.y)] = true
+            used[Int(tri.z)] = true
+        }
+        
+        var remap = [Int32](repeating: -1, count: tempVertices.count)
+        var cleanVertices: [ScannedVertex] = []
+        cleanVertices.reserveCapacity(tempVertices.count)
+        
+        for i in 0..<tempVertices.count {
+            if used[i] {
+                remap[i] = Int32(cleanVertices.count)
+                let tv = tempVertices[i]
+                cleanVertices.append(ScannedVertex(position: tv.headPos, color: tv.color))
+            }
+        }
+        
+        var triangles: [simd_int3] = []
+        triangles.reserveCapacity(rawTriangles.count)
+        for tri in rawTriangles {
+            let n0 = remap[Int(tri.x)]
+            let n1 = remap[Int(tri.y)]
+            let n2 = remap[Int(tri.z)]
+            if n0 >= 0 && n1 >= 0 && n2 >= 0 {
+                triangles.append(simd_int3(n0, n1, n2))
+            }
+        }
+        
+        if cleanVertices.isEmpty {
             return fallbackFaceGeometry(faceAnchor: faceAnchor)
         }
         
-        return ScannedMesh(vertices: vertices, triangles: triangles)
+        if liquidGlassSmoothing && cleanVertices.count > 4 {
+            var neighbors = [Set<Int>](repeating: Set<Int>(), count: cleanVertices.count)
+            for tri in triangles {
+                let a = Int(tri.x)
+                let b = Int(tri.y)
+                let c = Int(tri.z)
+                neighbors[a].insert(b); neighbors[a].insert(c)
+                neighbors[b].insert(a); neighbors[b].insert(c)
+                neighbors[c].insert(a); neighbors[c].insert(b)
+            }
+            
+            var positions = cleanVertices.map { $0.position }
+            for _ in 0..<2 {
+                var nextPos = positions
+                for i in 0..<cleanVertices.count {
+                    let nbrs = neighbors[i]
+                    guard !nbrs.isEmpty else { continue }
+                    var sum = simd_float3(0, 0, 0)
+                    for n in nbrs {
+                        sum += positions[n]
+                    }
+                    let avg = sum / Float(nbrs.count)
+                    nextPos[i] = positions[i] + 0.32 * (avg - positions[i])
+                }
+                positions = nextPos
+            }
+            
+            for i in 0..<cleanVertices.count {
+                cleanVertices[i] = ScannedVertex(position: positions[i], color: cleanVertices[i].color)
+            }
+        }
+        
+        return ScannedMesh(vertices: cleanVertices, triangles: triangles)
     }
     
     private func bilateralFilterDepth(

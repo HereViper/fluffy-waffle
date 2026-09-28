@@ -215,11 +215,11 @@ public struct ContentView: View {
             case .centerFace, .turnHeadLeftPartial, .turnHeadLeftFull, .turnHeadRightPartial, .turnHeadRightFull:
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
-                        stepBadge(index: 1, active: scanner.currentStage == .centerFace, text: "Центр")
-                        stepBadge(index: 2, active: scanner.currentStage == .turnHeadLeftPartial, text: "Лев. 3/4")
-                        stepBadge(index: 3, active: scanner.currentStage == .turnHeadLeftFull, text: "Лев. Профиль")
-                        stepBadge(index: 4, active: scanner.currentStage == .turnHeadRightPartial, text: "Прав. 3/4")
-                        stepBadge(index: 5, active: scanner.currentStage == .turnHeadRightFull, text: "Прав. Профиль")
+                        stepBadge(index: 1, active: scanner.currentStage == .centerFace, text: "Лицо")
+                        stepBadge(index: 2, active: scanner.currentStage == .turnHeadLeftPartial, text: "Прав. 3/4")
+                        stepBadge(index: 3, active: scanner.currentStage == .turnHeadLeftFull, text: "Прав. Профиль")
+                        stepBadge(index: 4, active: scanner.currentStage == .turnHeadRightPartial, text: "Лев. 3/4")
+                        stepBadge(index: 5, active: scanner.currentStage == .turnHeadRightFull, text: "Лев. Профиль")
                     }
                     .padding(.horizontal, 4)
                 }

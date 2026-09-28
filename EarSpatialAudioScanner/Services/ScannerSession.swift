@@ -27,13 +27,13 @@ public enum ScanStage: Equatable {
         case .centerFace:
             return "Лицо прямо (дистанция 30 см)"
         case .turnHeadLeftPartial:
-            return "Левое ухо 3/4: поверните голову влево на 25°"
+            return "Правое ухо 3/4: поверните голову влево на 25°"
         case .turnHeadLeftFull:
-            return "Левое ухо в профиль: поверните голову влево на 45°"
+            return "Правое ухо в профиль: поверните голову влево на 45°"
         case .turnHeadRightPartial:
-            return "Правое ухо 3/4: поверните голову вправо на 25°"
+            return "Левое ухо 3/4: поверните голову вправо на 25°"
         case .turnHeadRightFull:
-            return "Правое ухо в профиль: поверните голову вправо на 45°"
+            return "Левое ухо в профиль: поверните голову вправо на 45°"
         case .exporting:
             return "Обработка и сборка 3D анатомической модели..."
         case .finished:
@@ -222,7 +222,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     }
     
     private func evaluateStageCondition(yaw: Float, distance: Float) -> Bool {
-        guard distance >= 0.16 && distance <= 0.46 else {
+        guard distance >= 0.18 && distance <= 0.44 else {
             return false
         }
         
@@ -230,13 +230,13 @@ public final class ScannerSession: NSObject, ObservableObject {
         case .centerFace:
             return abs(yaw) <= 10.0
         case .turnHeadLeftPartial:
-            return yaw <= -16.0 && yaw >= -32.0
+            return yaw <= -18.0 && yaw >= -32.0
         case .turnHeadLeftFull:
-            return yaw <= -38.0
+            return yaw <= -40.0
         case .turnHeadRightPartial:
-            return yaw >= 16.0 && yaw <= 32.0
+            return yaw >= 18.0 && yaw <= 32.0
         case .turnHeadRightFull:
-            return yaw >= 38.0
+            return yaw >= 40.0
         default:
             return false
         }
@@ -283,10 +283,10 @@ public final class ScannerSession: NSObject, ObservableObject {
             let snapName: String
             switch currentScanStage {
             case .centerFace: snapName = "1_front_face"
-            case .turnHeadLeftPartial: snapName = "2_left_ear_angle_3_4"
-            case .turnHeadLeftFull: snapName = "3_left_ear_profile"
-            case .turnHeadRightPartial: snapName = "4_right_ear_angle_3_4"
-            case .turnHeadRightFull: snapName = "5_right_ear_profile"
+            case .turnHeadLeftPartial: snapName = "2_right_ear_angle_3_4"
+            case .turnHeadLeftFull: snapName = "3_right_ear_profile"
+            case .turnHeadRightPartial: snapName = "4_left_ear_angle_3_4"
+            case .turnHeadRightFull: snapName = "5_left_ear_profile"
             default: snapName = "scan"
             }
             
@@ -317,16 +317,16 @@ public final class ScannerSession: NSObject, ObservableObject {
         switch completedStage {
         case .centerFace:
             currentStage = .turnHeadLeftPartial
-            speak("Отлично. Теперь поверните голову немного влево на 25 градусов")
+            speak("Отлично. Теперь поверните голову немного влево на 25 градусов, чтобы показать правое ухо")
         case .turnHeadLeftPartial:
             currentStage = .turnHeadLeftFull
-            speak("Зафиксировано. Теперь поверните голову дальше влево до профиля уха")
+            speak("Зафиксировано. Теперь поверните голову дальше влево до полного профиля уха")
         case .turnHeadLeftFull:
             currentStage = .turnHeadRightPartial
-            speak("Отлично. Теперь поверните голову вправо на 25 градусов")
+            speak("Отлично. Теперь поверните голову вправо на 25 градусов, чтобы показать левое ухо")
         case .turnHeadRightPartial:
             currentStage = .turnHeadRightFull
-            speak("Зафиксировано. Теперь поверните голову дальше вправо до профиля уха")
+            speak("Зафиксировано. Теперь поверните голову дальше вправо до полного профиля уха")
         case .turnHeadRightFull:
             finishAndExport()
         default:

@@ -128,7 +128,7 @@ public final class ModelExporter {
             allVertices.append(contentsOf: snap.mesh.vertices)
             
             for tri in snap.mesh.triangles {
-                allTriangles.append(tri + simd_int3(repeating: offset))
+                allTriangles.append(tri &+ simd_int3(repeating: offset))
             }
             
             if let photoData = snap.jpegData {

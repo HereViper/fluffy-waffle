@@ -174,16 +174,18 @@ public final class ScannerSession: NSObject, ObservableObject {
         CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
         
         let liquidGlass = self.isLiquidGlassEnabled
+        let currentScanStage = stage
         Task.detached(priority: .userInitiated) {
-            let vertices = DepthPointCloudProcessor.shared.processFrame(
+            let mesh = DepthPointCloudProcessor.shared.processFrame(
                 frame: frame,
                 faceAnchor: faceAnchor,
                 customDepthData: depthToUse,
+                stage: currentScanStage,
                 step: 3,
                 liquidGlassSmoothing: liquidGlass
             )
             let snapName: String
-            switch stage {
+            switch currentScanStage {
             case .centerFace: snapName = "1_front_face"
             case .turnHeadLeftPartial: snapName = "2_left_ear_angle_3_4"
             case .turnHeadLeftFull: snapName = "3_left_ear_profile"
@@ -195,7 +197,7 @@ public final class ScannerSession: NSObject, ObservableObject {
             let snapshot = CaptureSnapshot(
                 name: snapName,
                 jpegData: jpegData,
-                vertices: vertices,
+                mesh: mesh,
                 yawDegrees: yaw,
                 pitchDegrees: pitch
             )
@@ -238,7 +240,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         session.pause()
         
         let snaps = self.snapshots
-        let count = snaps.reduce(0) { $0 + $1.vertices.count }
+        let count = snaps.reduce(0) { $0 + $1.mesh.vertices.count }
         self.totalVerticesCount = count
         
         let liquidGlass = self.isLiquidGlassEnabled

@@ -7,7 +7,7 @@ import simd
 public struct CaptureSnapshot {
     public let name: String
     public let jpegData: Data?
-    public let vertices: [ScannedVertex]
+    public let mesh: ScannedMesh
     public let yawDegrees: Float
     public let pitchDegrees: Float
 }
@@ -119,11 +119,17 @@ public final class ModelExporter {
         try fileManager.createDirectory(at: resultsDir, withIntermediateDirectories: true)
         
         var allVertices: [ScannedVertex] = []
+        var allTriangles: [simd_int3] = []
         var snapshotMetadata: [[String: Any]] = []
         var zipEntries: [(name: String, data: Data)] = []
         
         for snap in snapshots {
-            allVertices.append(contentsOf: snap.vertices)
+            let offset = Int32(allVertices.count)
+            allVertices.append(contentsOf: snap.mesh.vertices)
+            
+            for tri in snap.mesh.triangles {
+                allTriangles.append(tri + simd_int3(repeating: offset))
+            }
             
             if let photoData = snap.jpegData {
                 let photoURL = resultsDir.appendingPathComponent("\(snap.name).jpg")
@@ -133,18 +139,19 @@ public final class ModelExporter {
             
             snapshotMetadata.append([
                 "name": snap.name,
-                "vertex_count": snap.vertices.count,
+                "vertex_count": snap.mesh.vertices.count,
+                "face_count": snap.mesh.triangles.count,
                 "yaw_degrees": snap.yawDegrees,
                 "pitch_degrees": snap.pitchDegrees
             ])
         }
         
-        let objData = generateOBJData(vertices: allVertices)
+        let objData = generateOBJData(vertices: allVertices, triangles: allTriangles)
         let objURL = resultsDir.appendingPathComponent("ear_head_scan.obj")
         try? objData.write(to: objURL)
         zipEntries.append((name: "ear_head_scan.obj", data: objData))
         
-        let plyData = generatePLYData(vertices: allVertices)
+        let plyData = generatePLYData(vertices: allVertices, triangles: allTriangles)
         let plyURL = resultsDir.appendingPathComponent("ear_head_scan.ply")
         try? plyData.write(to: plyURL)
         zipEntries.append((name: "ear_head_scan.ply", data: plyData))
@@ -163,6 +170,7 @@ public final class ModelExporter {
             "device_model": UIDevice.current.model,
             "timestamp": ISO8601DateFormatter().string(from: Date()),
             "total_vertices": allVertices.count,
+            "total_faces": allTriangles.count,
             "liquid_glass_acoustic_smoothing": liquidGlassEnabled,
             "bounding_box_meters": [
                 "width": dimensions.x,
@@ -185,18 +193,22 @@ public final class ModelExporter {
         return finalZipURL
     }
     
-    private func generateOBJData(vertices: [ScannedVertex]) -> Data {
-        var str = "# iOS Face ID TrueDepth Ear & Head Scan\n# Vertices count: \(vertices.count)\n"
-        str.reserveCapacity(vertices.count * 48)
+    private func generateOBJData(vertices: [ScannedVertex], triangles: [simd_int3]) -> Data {
+        var str = "# iOS TrueDepth Spatial Audio Mesh\n# Vertices count: \(vertices.count)\n# Faces count: \(triangles.count)\n"
+        str.reserveCapacity(vertices.count * 48 + triangles.count * 24)
         
         for v in vertices {
             str.append("v \(round5(v.position.x)) \(round5(v.position.y)) \(round5(v.position.z)) \(round3(v.color.x)) \(round3(v.color.y)) \(round3(v.color.z))\n")
         }
         
+        for tri in triangles {
+            str.append("f \(tri.x + 1) \(tri.y + 1) \(tri.z + 1)\n")
+        }
+        
         return str.data(using: .utf8) ?? Data()
     }
     
-    private func generatePLYData(vertices: [ScannedVertex]) -> Data {
+    private func generatePLYData(vertices: [ScannedVertex], triangles: [simd_int3]) -> Data {
         var str = """
         ply
         format ascii 1.0
@@ -208,15 +220,21 @@ public final class ModelExporter {
         property uchar red
         property uchar green
         property uchar blue
+        element face \(triangles.count)
+        property list uchar int vertex_indices
         end_header\n
         """
-        str.reserveCapacity(vertices.count * 40)
+        str.reserveCapacity(vertices.count * 40 + triangles.count * 18)
         
         for v in vertices {
             let r = UInt8(min(max(v.color.x * 255.0, 0.0), 255.0))
             let g = UInt8(min(max(v.color.y * 255.0, 0.0), 255.0))
             let b = UInt8(min(max(v.color.z * 255.0, 0.0), 255.0))
             str.append("\(round5(v.position.x)) \(round5(v.position.y)) \(round5(v.position.z)) \(r) \(g) \(b)\n")
+        }
+        
+        for tri in triangles {
+            str.append("3 \(tri.x) \(tri.y) \(tri.z)\n")
         }
         
         return str.data(using: .utf8) ?? Data()

@@ -55,6 +55,8 @@ public final class ScannerSession: NSObject, ObservableObject {
     @Published public private(set) var isFaceDetected: Bool = false
     @Published public private(set) var targetHoldProgress: Float = 0.0
     @Published public private(set) var exportedZipURL: URL?
+    @Published public private(set) var totalVerticesCount: Int = 0
+    @Published public var isLiquidGlassEnabled: Bool = true
     
     public let session = ARSession()
     
@@ -62,6 +64,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     private let hapticGenerator = UIImpactFeedbackGenerator(style: .heavy)
     private let ciContext = CIContext(options: nil)
     private var snapshots: [CaptureSnapshot] = []
+    private var latestDepthData: AVDepthData?
     
     private var holdStartTime: Date?
     private let holdDurationRequired: TimeInterval = 0.6
@@ -90,6 +93,8 @@ public final class ScannerSession: NSObject, ObservableObject {
         
         snapshots.removeAll()
         exportedZipURL = nil
+        totalVerticesCount = 0
+        latestDepthData = nil
         targetHoldProgress = 0.0
         holdStartTime = nil
         isCapturingStage = false
@@ -156,6 +161,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         let stage = currentStage
         let yaw = currentYaw
         let pitch = currentPitch
+        let depthToUse = frame.capturedDepthData ?? self.latestDepthData
         
         let pixelBuffer = frame.capturedImage
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
@@ -167,8 +173,15 @@ public final class ScannerSession: NSObject, ObservableObject {
         )
         CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly)
         
+        let liquidGlass = self.isLiquidGlassEnabled
         Task.detached(priority: .userInitiated) {
-            let vertices = DepthPointCloudProcessor.shared.processFrame(frame: frame, faceAnchor: faceAnchor, step: 3)
+            let vertices = DepthPointCloudProcessor.shared.processFrame(
+                frame: frame,
+                faceAnchor: faceAnchor,
+                customDepthData: depthToUse,
+                step: 3,
+                liquidGlassSmoothing: liquidGlass
+            )
             let snapName: String
             switch stage {
             case .centerFace: snapName = "1_front_face"
@@ -225,9 +238,16 @@ public final class ScannerSession: NSObject, ObservableObject {
         session.pause()
         
         let snaps = self.snapshots
+        let count = snaps.reduce(0) { $0 + $1.vertices.count }
+        self.totalVerticesCount = count
+        
+        let liquidGlass = self.isLiquidGlassEnabled
         Task.detached(priority: .userInitiated) {
             do {
-                let zipURL = try ModelExporter.shared.exportScanPackage(snapshots: snaps)
+                let zipURL = try ModelExporter.shared.exportScanPackage(
+                    snapshots: snaps,
+                    liquidGlassEnabled: liquidGlass
+                )
                 await MainActor.run {
                     self.exportedZipURL = zipURL
                     self.currentStage = .finished(zipURL)
@@ -247,6 +267,12 @@ public final class ScannerSession: NSObject, ObservableObject {
 
 extension ScannerSession: ARSessionDelegate {
     public nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        if let depth = frame.capturedDepthData {
+            Task { @MainActor in
+                self.latestDepthData = depth
+            }
+        }
+        
         guard let faceAnchor = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first else {
             Task { @MainActor in
                 self.isFaceDetected = false

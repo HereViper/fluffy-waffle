@@ -17,11 +17,13 @@ public final class DepthPointCloudProcessor {
     public func processFrame(
         frame: ARFrame,
         faceAnchor: ARFaceAnchor,
+        customDepthData: AVDepthData? = nil,
         step: Int = 3,
-        maxHeadRadius: Float = 0.22
+        maxHeadRadius: Float = 0.28,
+        liquidGlassSmoothing: Bool = false
     ) -> [ScannedVertex] {
-        guard let rawDepthData = frame.capturedDepthData else {
-            return []
+        guard let rawDepthData = customDepthData ?? frame.capturedDepthData else {
+            return fallbackFaceGeometry(faceAnchor: faceAnchor)
         }
         
         let depthData = rawDepthData.converting(toDepthDataType: kCVPixelFormatType_DepthFloat32)
@@ -36,7 +38,7 @@ public final class DepthPointCloudProcessor {
         }
         
         guard let depthAddress = CVPixelBufferGetBaseAddress(depthMap) else {
-            return []
+            return fallbackFaceGeometry(faceAnchor: faceAnchor)
         }
         
         let depthWidth = CVPixelBufferGetWidth(depthMap)
@@ -88,18 +90,31 @@ public final class DepthPointCloudProcessor {
             let rowFloats = rowStart.assumingMemoryBound(to: Float32.self)
             
             for x in stride(from: 0, to: depthWidth, by: step) {
-                let depth = rowFloats[x]
+                var depth = rowFloats[x]
                 
                 guard !depth.isNaN, !depth.isInfinite, depth >= 0.15, depth <= 0.75 else {
                     continue
+                }
+                
+                if liquidGlassSmoothing && x > 0 && x < depthWidth - 1 && y > 0 && y < depthHeight - 1 {
+                    let prevRow = depthAddress.advanced(by: (y - 1) * depthBytesPerRow).assumingMemoryBound(to: Float32.self)
+                    let nextRow = depthAddress.advanced(by: (y + 1) * depthBytesPerRow).assumingMemoryBound(to: Float32.self)
+                    let dL = rowFloats[x - 1]
+                    let dR = rowFloats[x + 1]
+                    let dU = prevRow[x]
+                    let dD = nextRow[x]
+                    if !dL.isNaN && !dR.isNaN && !dU.isNaN && !dD.isNaN &&
+                        abs(dL - depth) < 0.03 && abs(dR - depth) < 0.03 {
+                        depth = depth * 0.5 + (dL + dR + dU + dD) * 0.125
+                    }
                 }
                 
                 let u = (Float(x) + 0.5) * scaleX
                 let v = (Float(y) + 0.5) * scaleY
                 
                 let xCam = (u - cx) * depth / fx
-                let yCam = (v - cy) * depth / fy
-                let zCam = depth
+                let yCam = -(v - cy) * depth / fy
+                let zCam = -depth
                 
                 let camPoint = simd_float4(xCam, yCam, zCam, 1.0)
                 let headPoint = simd_mul(cameraToHead, camPoint)
@@ -142,6 +157,16 @@ public final class DepthPointCloudProcessor {
             }
         }
         
+        if vertices.isEmpty {
+            return fallbackFaceGeometry(faceAnchor: faceAnchor)
+        }
+        
         return vertices
+    }
+    
+    private func fallbackFaceGeometry(faceAnchor: ARFaceAnchor) -> [ScannedVertex] {
+        return faceAnchor.geometry.vertices.map { pt in
+            ScannedVertex(position: pt, color: simd_float3(0.8, 0.8, 0.8))
+        }
     }
 }

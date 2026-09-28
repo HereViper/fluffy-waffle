@@ -108,7 +108,8 @@ public final class ModelExporter {
     private init() {}
     
     public func exportScanPackage(
-        snapshots: [CaptureSnapshot]
+        snapshots: [CaptureSnapshot],
+        liquidGlassEnabled: Bool = true
     ) throws -> URL {
         let fileManager = FileManager.default
         let documentsDir = fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -162,6 +163,7 @@ public final class ModelExporter {
             "device_model": UIDevice.current.model,
             "timestamp": ISO8601DateFormatter().string(from: Date()),
             "total_vertices": allVertices.count,
+            "liquid_glass_acoustic_smoothing": liquidGlassEnabled,
             "bounding_box_meters": [
                 "width": dimensions.x,
                 "height": dimensions.y,

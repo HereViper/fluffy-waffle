@@ -45,9 +45,43 @@ public struct ContentView: View {
     
     private var headerView: some View {
         VStack(spacing: 8) {
-            Text("3D Сканер ушей (Face ID)")
-                .font(.system(size: 20, weight: .bold, design: .rounded))
-                .foregroundColor(.white)
+            HStack {
+                Text("3D Сканер ушей (Face ID)")
+                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                Button(action: {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+                        scanner.isLiquidGlassEnabled.toggle()
+                    }
+                }) {
+                    HStack(spacing: 5) {
+                        Image(systemName: scanner.isLiquidGlassEnabled ? "drop.fill" : "drop")
+                            .font(.system(size: 12))
+                            .foregroundColor(scanner.isLiquidGlassEnabled ? .cyan : .white.opacity(0.5))
+                        Text("Liquid Glass")
+                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .foregroundColor(scanner.isLiquidGlassEnabled ? .white : .white.opacity(0.6))
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        scanner.isLiquidGlassEnabled ?
+                            Color.cyan.opacity(0.22) : Color.white.opacity(0.12)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(
+                                scanner.isLiquidGlassEnabled ?
+                                    Color.cyan.opacity(0.7) : Color.white.opacity(0.2),
+                                lineWidth: 1
+                            )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+            }
             
             Text(scanner.currentStage.title)
                 .font(.system(size: 15, weight: .medium))
@@ -55,7 +89,10 @@ public struct ContentView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 6)
-                .background(Color.black.opacity(0.65))
+                .background(
+                    scanner.isLiquidGlassEnabled ?
+                        Color.white.opacity(0.15) : Color.black.opacity(0.65)
+                )
                 .cornerRadius(12)
             
             if scanner.isFaceDetected {
@@ -83,13 +120,17 @@ public struct ContentView: View {
     private var targetAngleGuide: some View {
         ZStack {
             Circle()
-                .stroke(Color.white.opacity(0.2), lineWidth: 4)
+                .stroke(
+                    scanner.isLiquidGlassEnabled ?
+                        Color.cyan.opacity(0.25) : Color.white.opacity(0.2),
+                    lineWidth: 4
+                )
                 .frame(width: 240, height: 240)
             
             Circle()
                 .trim(from: 0.0, to: CGFloat(scanner.targetHoldProgress))
                 .stroke(
-                    Color.green,
+                    scanner.isLiquidGlassEnabled ? Color.cyan : Color.green,
                     style: StrokeStyle(lineWidth: 6, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
@@ -102,7 +143,7 @@ public struct ContentView: View {
                 if scanner.targetHoldProgress > 0 {
                     Text(String(format: "%.0f%%", scanner.targetHoldProgress * 100))
                         .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundColor(.green)
+                        .foregroundColor(scanner.isLiquidGlassEnabled ? .cyan : .green)
                 }
             }
         }
@@ -148,7 +189,7 @@ public struct ContentView: View {
                         .foregroundColor(.black)
                         .frame(maxWidth: .infinity)
                         .frame(height: 52)
-                        .background(Color.white)
+                        .background(scanner.isLiquidGlassEnabled ? Color.cyan : Color.white)
                         .cornerRadius(14)
                 }
                 
@@ -186,6 +227,14 @@ public struct ContentView: View {
                 
             case .finished:
                 VStack(spacing: 12) {
+                    Text("3D модель успешно создана!")
+                        .font(.system(size: 18, weight: .bold, design: .rounded))
+                        .foregroundColor(.green)
+                    
+                    Text("Точек в модели: \(scanner.totalVerticesCount)")
+                        .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.9))
+                    
                     if let zipURL = scanner.exportedZipURL {
                         ShareLink(item: zipURL) {
                             HStack(spacing: 8) {
@@ -196,7 +245,7 @@ public struct ContentView: View {
                             .foregroundColor(.black)
                             .frame(maxWidth: .infinity)
                             .frame(height: 52)
-                            .background(Color.white)
+                            .background(scanner.isLiquidGlassEnabled ? Color.cyan : Color.white)
                             .cornerRadius(14)
                         }
                         
@@ -210,7 +259,7 @@ public struct ContentView: View {
                         }
                     }
                     
-                    Text("Все файлы также сохранены в папке Documents:\nEarScan_Results и SpatialAudio_EarScan.zip\n(доступны через USB кабель на ПК)")
+                    Text("Все файлы сохранены в Documents:\nEarScan_Results и SpatialAudio_EarScan.zip\n(доступны через USB кабель на ПК)")
                         .font(.system(size: 12))
                         .foregroundColor(.white.opacity(0.7))
                         .multilineTextAlignment(.center)
@@ -278,7 +327,7 @@ public struct ContentView: View {
     private var stageColor: Color {
         switch scanner.currentStage {
         case .centerFace, .turnHeadLeftPartial, .turnHeadLeftFull, .turnHeadRightPartial, .turnHeadRightFull:
-            return scanner.targetHoldProgress > 0 ? .green : .white
+            return scanner.targetHoldProgress > 0 ? (scanner.isLiquidGlassEnabled ? .cyan : .green) : .white
         case .finished:
             return .green
         case .unsupported, .error:

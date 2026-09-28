@@ -394,6 +394,7 @@ extension ScannerSession: ARSessionDelegate {
             CVPixelBufferUnlockBaseAddress(depthMap, .readOnly)
         }
         
+        let measuredHwDist = hardwareDistance
         let faceAnchor = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first
         
         Task { @MainActor in
@@ -403,7 +404,7 @@ extension ScannerSession: ARSessionDelegate {
             
             guard let anchor = faceAnchor ?? self.lastKnownFaceAnchor else {
                 self.isFaceDetected = false
-                if let hwDist = hardwareDistance {
+                if let hwDist = measuredHwDist {
                     self.distanceMeters = hwDist
                 }
                 self.currentBurstCount = 0
@@ -418,7 +419,7 @@ extension ScannerSession: ARSessionDelegate {
             let facePosInCam = simd_float3(camToFace.columns.3.x, camToFace.columns.3.y, camToFace.columns.3.z)
             let anchorDist = simd_length(facePosInCam)
             
-            let currentDist = hardwareDistance ?? anchorDist
+            let currentDist = measuredHwDist ?? anchorDist
             self.distanceMeters = currentDist
             self.isFaceDetected = (faceAnchor != nil)
             

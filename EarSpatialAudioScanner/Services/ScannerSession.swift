@@ -126,7 +126,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     @Published public private(set) var targetHoldProgress: Float = 0.0
     @Published public private(set) var exportedZipURL: URL?
     @Published public private(set) var totalVerticesCount: Int = 0
-    @Published public var isLiquidGlassEnabled: Bool = true
+    @Published public var isManualMode: Bool = false
     
     @Published public private(set) var currentBurstCount: Int = 0
     public let targetBurstCount: Int = 5
@@ -146,6 +146,9 @@ public final class ScannerSession: NSObject, ObservableObject {
     private var isCapturingStage: Bool = false
     private var stageCooldownUntil: Date = Date()
     private var holdStartTime: Date?
+    private var manualTriggerActive: Bool = false
+    
+    private var volumeObservation: NSKeyValueObservation?
     
     override private init() {
         super.init()
@@ -153,6 +156,20 @@ public final class ScannerSession: NSObject, ObservableObject {
         configureAudioSession()
         lightTapGenerator.prepare()
         completionHaptic.prepare()
+        
+        let audioSession = AVAudioSession.sharedInstance()
+        try? audioSession.setActive(true)
+        volumeObservation = audioSession.observe(\.outputVolume, options: [.new]) { [weak self] _, _ in
+            DispatchQueue.main.async {
+                self?.triggerManualCapture()
+            }
+        }
+    }
+    
+    public func triggerManualCapture() {
+        guard isManualMode, !isCapturingStage else { return }
+        guard evaluateStageCondition(yaw: currentYaw, distance: distanceMeters) else { return }
+        manualTriggerActive = true
     }
     
     private func configureAudioSession() {
@@ -458,43 +475,74 @@ extension ScannerSession: ARSessionDelegate {
             let isConditionMet = self.evaluateStageCondition(yaw: yaw, distance: currentDist)
             
             if isConditionMet {
-                if let start = self.holdStartTime {
-                    let holdDuration = now.timeIntervalSince(start)
-                    let requiredHold: TimeInterval = 0.40
-                    
-                    if holdDuration < requiredHold {
-                        self.targetHoldProgress = Float(holdDuration / requiredHold)
-                        return
-                    }
-                    
-                    let interval: TimeInterval = 0.06
-                    let shouldCapture: Bool
-                    if let lastTime = self.lastBurstCaptureTime {
-                        shouldCapture = now.timeIntervalSince(lastTime) >= interval
-                    } else {
-                        shouldCapture = true
-                    }
-                    
-                    if shouldCapture && self.currentBurstCount < self.targetBurstCount {
-                        if let depth = frame.capturedDepthData ?? self.latestDepthData {
-                            self.depthAccumulator.addFrame(depthData: depth)
+                if self.isManualMode {
+                    self.targetHoldProgress = self.manualTriggerActive ? Float(self.currentBurstCount) / Float(self.targetBurstCount) : 1.0
+                    if self.manualTriggerActive {
+                        let interval: TimeInterval = 0.06
+                        let shouldCapture: Bool
+                        if let lastTime = self.lastBurstCaptureTime {
+                            shouldCapture = now.timeIntervalSince(lastTime) >= interval
+                        } else {
+                            shouldCapture = true
                         }
-                        self.currentBurstCount += 1
-                        self.lastBurstCaptureTime = now
-                        self.targetHoldProgress = Float(self.currentBurstCount) / Float(self.targetBurstCount)
                         
-                        self.lightTapGenerator.prepare()
-                        self.lightTapGenerator.impactOccurred()
-                        
-                        if self.currentBurstCount >= self.targetBurstCount {
-                            self.handleStageCompletion(frame: frame, faceAnchor: anchor)
+                        if shouldCapture && self.currentBurstCount < self.targetBurstCount {
+                            if let depth = frame.capturedDepthData ?? self.latestDepthData {
+                                self.depthAccumulator.addFrame(depthData: depth)
+                            }
+                            self.currentBurstCount += 1
+                            self.lastBurstCaptureTime = now
+                            self.targetHoldProgress = Float(self.currentBurstCount) / Float(self.targetBurstCount)
+                            
+                            self.lightTapGenerator.prepare()
+                            self.lightTapGenerator.impactOccurred()
+                            
+                            if self.currentBurstCount >= self.targetBurstCount {
+                                self.manualTriggerActive = false
+                                self.handleStageCompletion(frame: frame, faceAnchor: anchor)
+                            }
                         }
                     }
                 } else {
-                    self.holdStartTime = now
-                    self.targetHoldProgress = 0.05
+                    if let start = self.holdStartTime {
+                        let holdDuration = now.timeIntervalSince(start)
+                        let requiredHold: TimeInterval = 0.40
+                        
+                        if holdDuration < requiredHold {
+                            self.targetHoldProgress = Float(holdDuration / requiredHold)
+                            return
+                        }
+                        
+                        let interval: TimeInterval = 0.06
+                        let shouldCapture: Bool
+                        if let lastTime = self.lastBurstCaptureTime {
+                            shouldCapture = now.timeIntervalSince(lastTime) >= interval
+                        } else {
+                            shouldCapture = true
+                        }
+                        
+                        if shouldCapture && self.currentBurstCount < self.targetBurstCount {
+                            if let depth = frame.capturedDepthData ?? self.latestDepthData {
+                                self.depthAccumulator.addFrame(depthData: depth)
+                            }
+                            self.currentBurstCount += 1
+                            self.lastBurstCaptureTime = now
+                            self.targetHoldProgress = Float(self.currentBurstCount) / Float(self.targetBurstCount)
+                            
+                            self.lightTapGenerator.prepare()
+                            self.lightTapGenerator.impactOccurred()
+                            
+                            if self.currentBurstCount >= self.targetBurstCount {
+                                self.handleStageCompletion(frame: frame, faceAnchor: anchor)
+                            }
+                        }
+                    } else {
+                        self.holdStartTime = now
+                        self.targetHoldProgress = 0.05
+                    }
                 }
             } else {
+                self.manualTriggerActive = false
                 self.currentBurstCount = 0
                 self.lastBurstCaptureTime = nil
                 self.holdStartTime = nil

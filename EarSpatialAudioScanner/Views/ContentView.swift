@@ -53,28 +53,17 @@ public struct ContentView: View {
                 Spacer()
                 
                 HStack(spacing: 8) {
-                    Text("Liquid Glass")
+                    Text("Ручной")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
-                        .foregroundColor(scanner.isLiquidGlassEnabled ? .white : .white.opacity(0.6))
+                        .foregroundColor(scanner.isManualMode ? .white : .white.opacity(0.6))
                     
-                    Toggle("", isOn: $scanner.isLiquidGlassEnabled)
+                    Toggle("", isOn: $scanner.isManualMode)
                         .labelsHidden()
-                        .toggleStyle(SwitchToggleStyle(tint: .cyan))
+                        .toggleStyle(SwitchToggleStyle(tint: .orange))
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 4)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(
-                    Capsule()
-                        .stroke(
-                            LinearGradient(
-                                colors: [Color.white.opacity(0.4), Color.white.opacity(0.1)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            ),
-                            lineWidth: 0.8
-                        )
-                )
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .glassEffect(.regular.tint(.orange).interactive())
             }
             
             Text(scanner.currentStage.title)
@@ -83,10 +72,7 @@ public struct ContentView: View {
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 6)
-                .background(
-                    scanner.isLiquidGlassEnabled ?
-                        Color.white.opacity(0.15) : Color.black.opacity(0.65)
-                )
+                .background(Color.black.opacity(0.65))
                 .cornerRadius(12)
             
             if scanner.currentStage == .turnHeadLeftFull || scanner.currentStage == .turnHeadRightFull {
@@ -110,8 +96,7 @@ public struct ContentView: View {
                         icon: { Image(systemName: "ruler") }
                     )
                     .foregroundColor(
-                        (scanner.distanceMeters >= 0.20 && scanner.distanceMeters <= 0.38) ?
-                            (scanner.isLiquidGlassEnabled ? .cyan : .green) : .yellow
+                        (scanner.distanceMeters >= 0.20 && scanner.distanceMeters <= 0.38) ? .green : .yellow
                     )
                     
                     if scanner.isFaceDetected {
@@ -136,8 +121,7 @@ public struct ContentView: View {
         ZStack {
             Circle()
                 .stroke(
-                    scanner.isLiquidGlassEnabled ?
-                        Color.cyan.opacity(0.25) : Color.white.opacity(0.2),
+                    Color.white.opacity(0.2),
                     lineWidth: 4
                 )
                 .frame(width: 240, height: 240)
@@ -145,7 +129,7 @@ public struct ContentView: View {
             Circle()
                 .trim(from: 0.0, to: CGFloat(scanner.targetHoldProgress))
                 .stroke(
-                    scanner.isLiquidGlassEnabled ? Color.cyan : Color.green,
+                    Color.green,
                     style: StrokeStyle(lineWidth: 6, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
@@ -159,7 +143,7 @@ public struct ContentView: View {
                     VStack(spacing: 2) {
                         Text("\(scanner.currentBurstCount) / \(scanner.targetBurstCount)")
                             .font(.system(size: 22, weight: .bold, design: .rounded))
-                            .foregroundColor(scanner.isLiquidGlassEnabled ? .cyan : .green)
+                            .foregroundColor(.green)
                         Text("Серия кадров...")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.white.opacity(0.8))
@@ -210,7 +194,7 @@ public struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .tint(scanner.isLiquidGlassEnabled ? .cyan : .blue)
+                .tint(.blue)
                 
             case .centerFace, .turnHeadLeftPartial, .turnHeadLeftFull, .turnHeadRightPartial, .turnHeadRightFull:
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -263,7 +247,7 @@ public struct ContentView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
-                        .tint(scanner.isLiquidGlassEnabled ? .cyan : .green)
+                        .tint(.green)
                         
                         Button(action: {
                             presentSystemShare(url: zipURL)
@@ -346,7 +330,7 @@ public struct ContentView: View {
     private var stageColor: Color {
         switch scanner.currentStage {
         case .centerFace, .turnHeadLeftPartial, .turnHeadLeftFull, .turnHeadRightPartial, .turnHeadRightFull:
-            return scanner.targetHoldProgress > 0 ? (scanner.isLiquidGlassEnabled ? .cyan : .green) : .white
+            return scanner.targetHoldProgress > 0 ? .green : .white
         case .finished:
             return .green
         case .unsupported, .error:

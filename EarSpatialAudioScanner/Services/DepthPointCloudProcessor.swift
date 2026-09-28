@@ -29,8 +29,7 @@ public final class DepthPointCloudProcessor {
         faceAnchor: ARFaceAnchor,
         customDepthData: AVDepthData? = nil,
         stage: ScanStage,
-        step: Int = 3,
-        maxHeadRadius: Float = 0.28,
+        step: Int = 2,
         liquidGlassSmoothing: Bool = false
     ) -> ScannedMesh {
         guard let rawDepthData = customDepthData ?? frame.capturedDepthData else {
@@ -59,18 +58,36 @@ public final class DepthPointCloudProcessor {
         let imageWidth = CVPixelBufferGetWidth(imageBuffer)
         let imageHeight = CVPixelBufferGetHeight(imageBuffer)
         
-        let intrinsics = frame.camera.intrinsics
-        let fx = intrinsics[0, 0]
-        let fy = intrinsics[1, 1]
-        let cx = intrinsics[2, 0]
-        let cy = intrinsics[2, 1]
+        let intrinsics: simd_float3x3
+        let refW: Float
+        let refH: Float
         
-        let scaleX = Float(imageWidth) / Float(depthWidth)
-        let scaleY = Float(imageHeight) / Float(depthHeight)
+        if let calib = depthData.cameraCalibrationData {
+            intrinsics = calib.intrinsicMatrix
+            refW = Float(calib.intrinsicMatrixReferenceDimensions.width)
+            refH = Float(calib.intrinsicMatrixReferenceDimensions.height)
+        } else {
+            intrinsics = frame.camera.intrinsics
+            refW = Float(imageWidth)
+            refH = Float(imageHeight)
+        }
+        
+        let scaleX = Float(depthWidth) / refW
+        let scaleY = Float(depthHeight) / refH
+        let fx = intrinsics[0, 0] * scaleX
+        let fy = intrinsics[1, 1] * scaleY
+        let cx = intrinsics[2, 0] * scaleX
+        let cy = intrinsics[2, 1] * scaleY
+        
+        let imgScaleX = Float(imageWidth) / Float(depthWidth)
+        let imgScaleY = Float(imageHeight) / Float(depthHeight)
         
         let worldToHead = faceAnchor.transform.inverse
         let cameraToWorld = frame.camera.transform
         let cameraToHead = simd_mul(worldToHead, cameraToWorld)
+        
+        let camPosInHead4 = simd_mul(cameraToHead, simd_float4(0, 0, 0, 1))
+        let camPosInHead = simd_float3(camPosInHead4.x, camPosInHead4.y, camPosInHead4.z)
         
         let gridCols = (depthWidth + step - 1) / step
         let gridRows = (depthHeight + step - 1) / step
@@ -110,26 +127,36 @@ public final class DepthPointCloudProcessor {
                 defer { gridX += 1 }
                 var depth = rowFloats[x]
                 
-                guard !depth.isNaN, !depth.isInfinite, depth >= 0.15, depth <= 0.75 else {
+                guard !depth.isNaN, !depth.isInfinite, depth >= 0.15, depth <= 0.70 else {
                     continue
                 }
                 
-                if liquidGlassSmoothing && x > 0 && x < depthWidth - 1 && y > 0 && y < depthHeight - 1 {
-                    let prevRow = depthAddress.advanced(by: (y - 1) * depthBytesPerRow).assumingMemoryBound(to: Float32.self)
-                    let nextRow = depthAddress.advanced(by: (y + 1) * depthBytesPerRow).assumingMemoryBound(to: Float32.self)
-                    let dL = rowFloats[x - 1]
-                    let dR = rowFloats[x + 1]
-                    let dU = prevRow[x]
-                    let dD = nextRow[x]
-                    if !dL.isNaN && !dR.isNaN && !dU.isNaN && !dD.isNaN &&
-                        abs(dL - depth) < 0.03 && abs(dR - depth) < 0.03 {
-                        depth = depth * 0.5 + (dL + dR + dU + dD) * 0.125
+                var filteredDepth = depth
+                var filterWeight: Float = 1.0
+                let radius = liquidGlassSmoothing ? 3 : 2
+                let depthTolerance: Float = liquidGlassSmoothing ? 0.012 : 0.007
+                
+                for dy in -radius...radius {
+                    let ny = y + dy
+                    guard ny >= 0 && ny < depthHeight else { continue }
+                    let nRow = depthAddress.advanced(by: ny * depthBytesPerRow).assumingMemoryBound(to: Float32.self)
+                    for dx in -radius...radius {
+                        if dx == 0 && dy == 0 { continue }
+                        let nx = x + dx
+                        guard nx >= 0 && nx < depthWidth else { continue }
+                        let nd = nRow[nx]
+                        if !nd.isNaN && !nd.isInfinite && abs(nd - depth) < depthTolerance {
+                            let spatialDistSq = Float(dx * dx + dy * dy)
+                            let w = 1.0 / (1.0 + spatialDistSq * 0.5)
+                            filteredDepth += nd * w
+                            filterWeight += w
+                        }
                     }
                 }
+                depth = filteredDepth / filterWeight
                 
-                let u = (Float(x) + 0.5) * scaleX
-                let v = (Float(y) + 0.5) * scaleY
-                
+                let u = Float(x) + 0.5
+                let v = Float(y) + 0.5
                 let xCam = (u - cx) * depth / fx
                 let yCam = -(v - cy) * depth / fy
                 let zCam = -depth
@@ -138,24 +165,38 @@ public final class DepthPointCloudProcessor {
                 let headPoint = simd_mul(cameraToHead, camPoint)
                 let headPos = simd_float3(headPoint.x, headPoint.y, headPoint.z)
                 
-                let distToHeadCenter = simd_length(headPos)
-                guard distToHeadCenter <= maxHeadRadius else {
+                guard headPos.y >= -0.105 && headPos.y <= 0.135 else {
+                    continue
+                }
+                guard headPos.z >= -0.130 && headPos.z <= 0.120 else {
+                    continue
+                }
+                let radialDistXZ = hypot(headPos.x, headPos.z)
+                guard radialDistXZ <= 0.132 else {
                     continue
                 }
                 
                 switch stage {
                 case .centerFace:
-                    guard headPos.z >= -0.12 && abs(headPos.x) <= 0.14 else { continue }
+                    guard abs(headPos.x) <= 0.048 && headPos.z >= 0.005 else { continue }
                 case .turnHeadLeftPartial, .turnHeadLeftFull:
-                    guard headPos.x <= -0.015 else { continue }
+                    if camPosInHead.x > 0 {
+                        guard headPos.x >= 0.032 else { continue }
+                    } else {
+                        guard headPos.x <= -0.032 else { continue }
+                    }
                 case .turnHeadRightPartial, .turnHeadRightFull:
-                    guard headPos.x >= 0.015 else { continue }
+                    if camPosInHead.x > 0 {
+                        guard headPos.x >= 0.032 else { continue }
+                    } else {
+                        guard headPos.x <= -0.032 else { continue }
+                    }
                 default:
                     break
                 }
                 
-                let imgX = min(max(Int(u), 0), imageWidth - 1)
-                let imgY = min(max(Int(v), 0), imageHeight - 1)
+                let imgX = min(max(Int(u * imgScaleX), 0), imageWidth - 1)
+                let imgY = min(max(Int(v * imgScaleY), 0), imageHeight - 1)
                 
                 var r: Float = 0.8
                 var g: Float = 0.8
@@ -191,7 +232,7 @@ public final class DepthPointCloudProcessor {
         
         var triangles: [simd_int3] = []
         triangles.reserveCapacity(vertices.count * 2)
-        let maxEdgeDistance: Float = 0.016
+        let maxEdgeDistance: Float = 0.009
         
         for gy in 0..<(gridRows - 1) {
             for gx in 0..<(gridCols - 1) {

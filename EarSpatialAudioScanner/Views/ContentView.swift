@@ -46,17 +46,35 @@ public struct ContentView: View {
     private var headerView: some View {
         VStack(spacing: 8) {
             HStack {
-                Text("3D Сканер ушей (Face ID)")
+                Text("3D Сканер ушей")
                     .font(.system(size: 19, weight: .bold, design: .rounded))
                     .foregroundColor(.white)
+                
+                Spacer()
                 
                 HStack(spacing: 8) {
                     Text("Liquid Glass")
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundColor(scanner.isLiquidGlassEnabled ? .white : .white.opacity(0.6))
                     
-                    LiquidGlassToggle(isOn: $scanner.isLiquidGlassEnabled)
+                    Toggle("", isOn: $scanner.isLiquidGlassEnabled)
+                        .labelsHidden()
+                        .toggleStyle(SwitchToggleStyle(tint: .cyan))
                 }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(
+                    Capsule()
+                        .stroke(
+                            LinearGradient(
+                                colors: [Color.white.opacity(0.4), Color.white.opacity(0.1)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            ),
+                            lineWidth: 0.8
+                        )
+                )
             }
             
             Text(scanner.currentStage.title)
@@ -160,14 +178,13 @@ public struct ContentView: View {
                 Button(action: {
                     scanner.startScanning()
                 }) {
-                    Text("Начать сканирование")
+                    Label("Начать сканирование", systemImage: "sparkles")
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundColor(.black)
                         .frame(maxWidth: .infinity)
-                        .frame(height: 52)
-                        .background(scanner.isLiquidGlassEnabled ? Color.cyan : Color.white)
-                        .cornerRadius(14)
                 }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .tint(scanner.isLiquidGlassEnabled ? .cyan : .blue)
                 
             case .centerFace, .turnHeadLeftPartial, .turnHeadLeftFull, .turnHeadRightPartial, .turnHeadRightFull:
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -181,14 +198,15 @@ public struct ContentView: View {
                     .padding(.horizontal, 4)
                 }
                 
-                Button(action: {
+                Button(role: .cancel, action: {
                     scanner.stopScanning()
                 }) {
                     Text("Отмена")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
-                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.bordered)
+                .controlSize(.regular)
+                .tint(.white)
                 
             case .exporting:
                 VStack(spacing: 12) {
@@ -202,7 +220,7 @@ public struct ContentView: View {
                 .padding()
                 
             case .finished:
-                VStack(spacing: 12) {
+                VStack(spacing: 14) {
                     Text("3D модель успешно создана!")
                         .font(.system(size: 18, weight: .bold, design: .rounded))
                         .foregroundColor(.green)
@@ -213,26 +231,22 @@ public struct ContentView: View {
                     
                     if let zipURL = scanner.exportedZipURL {
                         ShareLink(item: zipURL) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "square.and.arrow.up")
-                                Text("Поделиться архивом (ZIP)")
-                            }
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(.black)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 52)
-                            .background(scanner.isLiquidGlassEnabled ? Color.cyan : Color.white)
-                            .cornerRadius(14)
+                            Label("Поделиться архивом (ZIP)", systemImage: "square.and.arrow.up")
+                                .font(.system(size: 17, weight: .semibold))
+                                .frame(maxWidth: .infinity)
                         }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .tint(scanner.isLiquidGlassEnabled ? .cyan : .green)
                         
                         Button(action: {
                             presentSystemShare(url: zipURL)
                         }) {
                             Text("Сохранить в «Файлы» / Отправить")
                                 .font(.system(size: 15, weight: .medium))
-                                .foregroundColor(.white)
-                                .padding(.vertical, 4)
                         }
+                        .buttonStyle(.borderless)
+                        .tint(.white)
                     }
                     
                     Text("Все файлы сохранены в Documents:\nEarScan_Results и SpatialAudio_EarScan.zip\n(доступны через USB кабель на ПК)")
@@ -243,10 +257,12 @@ public struct ContentView: View {
                     Button(action: {
                         scanner.startScanning()
                     }) {
-                        Text("Сканировать заново")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(.white.opacity(0.6))
+                        Label("Сканировать заново", systemImage: "arrow.clockwise")
+                            .frame(maxWidth: .infinity)
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+                    .tint(.white)
                 }
                 
             case .unsupported:
@@ -275,6 +291,7 @@ public struct ContentView: View {
                             .font(.system(size: 15, weight: .semibold))
                             .foregroundColor(.white)
                     }
+                    .buttonStyle(.bordered)
                 }
             }
         }

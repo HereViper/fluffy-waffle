@@ -181,7 +181,7 @@ public final class ScannerSession: NSObject, ObservableObject {
                 faceAnchor: faceAnchor,
                 customDepthData: depthToUse,
                 stage: currentScanStage,
-                step: 3,
+                step: 2,
                 liquidGlassSmoothing: liquidGlass
             )
             let snapName: String

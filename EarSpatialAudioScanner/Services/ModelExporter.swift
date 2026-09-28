@@ -48,7 +48,6 @@ public enum SimpleZipWriter {
             let uncompressedSize = UInt32(entry.data.count)
             let crc = PureSwiftCRC32.checksum(data: entry.data)
             
-            // Local file header
             zipData.append(contentsOf: [0x50, 0x4b, 0x03, 0x04])
             zipData.append(contentsOf: [0x14, 0x00])
             zipData.append(contentsOf: [0x00, 0x00])
@@ -62,7 +61,6 @@ public enum SimpleZipWriter {
             zipData.append(filenameData)
             zipData.append(entry.data)
             
-            // Central directory entry
             centralDirectory.append(contentsOf: [0x50, 0x4b, 0x01, 0x02])
             centralDirectory.append(contentsOf: [0x14, 0x00])
             centralDirectory.append(contentsOf: [0x14, 0x00])
@@ -88,7 +86,6 @@ public enum SimpleZipWriter {
         
         zipData.append(centralDirectory)
         
-        // End of central directory
         zipData.append(contentsOf: [0x50, 0x4b, 0x05, 0x06])
         zipData.append(contentsOf: [0x00, 0x00])
         zipData.append(contentsOf: [0x00, 0x00])
@@ -129,6 +126,14 @@ public final class ModelExporter {
             
             for tri in snap.mesh.triangles {
                 allTriangles.append(tri &+ simd_int3(repeating: offset))
+            }
+            
+            if !snap.mesh.vertices.isEmpty {
+                let sectorObjData = generateOBJData(vertices: snap.mesh.vertices, triangles: snap.mesh.triangles)
+                let sectorFileName = "\(snap.name).obj"
+                let sectorURL = resultsDir.appendingPathComponent(sectorFileName)
+                try? sectorObjData.write(to: sectorURL)
+                zipEntries.append((name: sectorFileName, data: sectorObjData))
             }
             
             if let photoData = snap.jpegData {
@@ -193,22 +198,56 @@ public final class ModelExporter {
         return finalZipURL
     }
     
+    private func computeVertexNormals(vertices: [ScannedVertex], triangles: [simd_int3]) -> [simd_float3] {
+        var normals = [simd_float3](repeating: simd_float3(0, 0, 0), count: vertices.count)
+        for tri in triangles {
+            let i0 = Int(tri.x)
+            let i1 = Int(tri.y)
+            let i2 = Int(tri.z)
+            guard i0 < vertices.count && i1 < vertices.count && i2 < vertices.count else { continue }
+            let p0 = vertices[i0].position
+            let p1 = vertices[i1].position
+            let p2 = vertices[i2].position
+            let cross = simd_cross(p1 - p0, p2 - p0)
+            normals[i0] += cross
+            normals[i1] += cross
+            normals[i2] += cross
+        }
+        for i in 0..<normals.count {
+            let n = normals[i]
+            let len = simd_length(n)
+            normals[i] = len > 1e-6 ? (n / len) : simd_float3(0, 0, 1)
+        }
+        return normals
+    }
+    
     private func generateOBJData(vertices: [ScannedVertex], triangles: [simd_int3]) -> Data {
-        var str = "# iOS TrueDepth Spatial Audio Mesh\n# Vertices count: \(vertices.count)\n# Faces count: \(triangles.count)\n"
-        str.reserveCapacity(vertices.count * 48 + triangles.count * 24)
+        var str = "# iOS TrueDepth Spatial Audio Mesh (HATS & Ear Model)\n# Vertices count: \(vertices.count)\n# Faces count: \(triangles.count)\n"
+        str.reserveCapacity(vertices.count * 80 + triangles.count * 32)
+        
+        let normals = computeVertexNormals(vertices: vertices, triangles: triangles)
         
         for v in vertices {
             str.append("v \(round5(v.position.x)) \(round5(v.position.y)) \(round5(v.position.z)) \(round3(v.color.x)) \(round3(v.color.y)) \(round3(v.color.z))\n")
         }
         
+        for n in normals {
+            str.append("vn \(round5(n.x)) \(round5(n.y)) \(round5(n.z))\n")
+        }
+        
+        str.append("s 1\n")
         for tri in triangles {
-            str.append("f \(tri.x + 1) \(tri.y + 1) \(tri.z + 1)\n")
+            let i1 = tri.x + 1
+            let i2 = tri.y + 1
+            let i3 = tri.z + 1
+            str.append("f \(i1)//\(i1) \(i2)//\(i2) \(i3)//\(i3)\n")
         }
         
         return str.data(using: .utf8) ?? Data()
     }
     
     private func generatePLYData(vertices: [ScannedVertex], triangles: [simd_int3]) -> Data {
+        let normals = computeVertexNormals(vertices: vertices, triangles: triangles)
         var str = """
         ply
         format ascii 1.0
@@ -217,6 +256,9 @@ public final class ModelExporter {
         property float x
         property float y
         property float z
+        property float nx
+        property float ny
+        property float nz
         property uchar red
         property uchar green
         property uchar blue
@@ -224,13 +266,15 @@ public final class ModelExporter {
         property list uchar int vertex_indices
         end_header\n
         """
-        str.reserveCapacity(vertices.count * 40 + triangles.count * 18)
+        str.reserveCapacity(vertices.count * 60 + triangles.count * 20)
         
-        for v in vertices {
+        for i in 0..<vertices.count {
+            let v = vertices[i]
+            let n = normals[i]
             let r = UInt8(min(max(v.color.x * 255.0, 0.0), 255.0))
             let g = UInt8(min(max(v.color.y * 255.0, 0.0), 255.0))
             let b = UInt8(min(max(v.color.z * 255.0, 0.0), 255.0))
-            str.append("\(round5(v.position.x)) \(round5(v.position.y)) \(round5(v.position.z)) \(r) \(g) \(b)\n")
+            str.append("\(round5(v.position.x)) \(round5(v.position.y)) \(round5(v.position.z)) \(round5(n.x)) \(round5(n.y)) \(round5(n.z)) \(r) \(g) \(b)\n")
         }
         
         for tri in triangles {

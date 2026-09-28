@@ -5,6 +5,7 @@ import AudioToolbox
 import UIKit
 import CoreImage
 import Combine
+import SceneKit
 
 public enum ScanStage: Equatable {
     case unsupported
@@ -127,6 +128,13 @@ public final class ScannerSession: NSObject, ObservableObject {
     @Published public private(set) var exportedZipURL: URL?
     @Published public private(set) var totalVerticesCount: Int = 0
     @Published public var isManualMode: Bool = false
+    
+    @Published public var isDebugMode: Bool = false
+    @Published public var debugBilateralRadius: Float = 5.0
+    @Published public var debugSpatialSigma: Float = 4.0
+    @Published public var debugRangeSigma: Float = 0.015
+    @Published public var debugTaubinIterations: Float = 20.0
+    @Published public var debugMesh: SCNGeometry?
     
     @Published public private(set) var currentBurstCount: Int = 0
     public let targetBurstCount: Int = 1
@@ -474,6 +482,42 @@ extension ScannerSession: ARSessionDelegate {
             
             let isConditionMet = self.evaluateStageCondition(yaw: yaw, distance: currentDist)
             
+            if self.isDebugMode {
+                let now = Date()
+                if let last = self.lastBurstCaptureTime, now.timeIntervalSince(last) < 1.0 {
+                    return
+                }
+                self.lastBurstCaptureTime = now
+                
+                Task.detached(priority: .userInitiated) { [weak self] in
+                    guard let self = self else { return }
+                    
+                    let debugBilateralRadius = await self.debugBilateralRadius
+                    let debugSpatialSigma = await self.debugSpatialSigma
+                    let debugRangeSigma = await self.debugRangeSigma
+                    let debugTaubinIterations = await self.debugTaubinIterations
+                    
+                    let mesh = DepthPointCloudProcessor.shared.processFrame(
+                        frame: frame,
+                        faceAnchor: anchor,
+                        stage: await self.currentStage,
+                        liquidGlassSmoothing: true,
+                        tuningRadius: Int(debugBilateralRadius),
+                        tuningSpatialSigma: debugSpatialSigma,
+                        tuningRangeSigma: debugRangeSigma,
+                        tuningTaubinIters: Int(debugTaubinIterations)
+                    )
+                    
+                    if let mesh = mesh {
+                        let geom = self.buildSCNGeometry(from: mesh)
+                        Task { @MainActor in
+                            self.debugMesh = geom
+                        }
+                    }
+                }
+                return
+            }
+            
             if isConditionMet {
                 if self.isManualMode {
                     self.targetHoldProgress = self.manualTriggerActive ? Float(self.currentBurstCount) / Float(self.targetBurstCount) : 1.0
@@ -550,5 +594,22 @@ extension ScannerSession: ARSessionDelegate {
                 self.depthAccumulator.reset()
             }
         }
+    }
+    
+    private func buildSCNGeometry(from mesh: ScannedMesh) -> SCNGeometry {
+        let vertices = mesh.vertices.map { SCNVector3($0.position.x, $0.position.y, $0.position.z) }
+        let vertexSource = SCNGeometrySource(vertices: vertices)
+        
+        let indices = mesh.triangles.flatMap { [Int32($0.x), Int32($0.y), Int32($0.z)] }
+        let indexData = Data(bytes: indices, count: indices.count * MemoryLayout<Int32>.size)
+        let element = SCNGeometryElement(data: indexData, primitiveType: .triangles, primitiveCount: indices.count / 3, bytesPerIndex: MemoryLayout<Int32>.size)
+        
+        let geom = SCNGeometry(sources: [vertexSource], elements: [element])
+        let mat = SCNMaterial()
+        mat.diffuse.contents = UIColor.cyan
+        mat.lightingModel = .physicallyBased
+        mat.isDoubleSided = true
+        geom.materials = [mat]
+        return geom
     }
 }

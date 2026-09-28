@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import SceneKit
 
 public struct ContentView: View {
     @StateObject private var scanner = ScannerSession.shared
@@ -16,21 +17,25 @@ public struct ContentView: View {
                     .opacity(scanner.currentStage == .exporting ? 0.2 : 1.0)
             }
             
-            VStack(spacing: 16) {
-                headerView
-                
-                Spacer()
-                
-                if isScanningActive {
-                    targetAngleGuide
+            if scanner.isDebugMode {
+                debugOverlay
+            } else {
+                VStack(spacing: 16) {
+                    headerView
+                    
+                    Spacer()
+                    
+                    if isScanningActive {
+                        targetAngleGuide
+                    }
+                    
+                    Spacer()
+                    
+                    bottomControlPanel
                 }
-                
-                Spacer()
-                
-                bottomControlPanel
+                .padding(.horizontal, 20)
+                .padding(.vertical, 14)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
         }
     }
     
@@ -51,6 +56,17 @@ public struct ContentView: View {
                     .foregroundColor(.white)
                 
                 Spacer()
+                
+                HStack(spacing: 8) {
+                    Text("Tuning")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(scanner.isDebugMode ? .white : .gray)
+                    
+                    Toggle("", isOn: $scanner.isDebugMode)
+                        .labelsHidden()
+                        .toggleStyle(SwitchToggleStyle(tint: .purple))
+                        .scaleEffect(0.8)
+                }
                 
                 HStack(spacing: 8) {
                     Text("Ручной")
@@ -370,5 +386,70 @@ public struct ContentView: View {
             topController = presented
         }
         topController.present(activityVC, animated: true)
+    }
+    
+    @ViewBuilder
+    private var debugOverlay: some View {
+        VStack {
+            headerView
+            
+            if let geom = scanner.debugMesh {
+                SceneView(
+                    scene: {
+                        let s = SCNScene()
+                        let node = SCNNode(geometry: geom)
+                        node.position = SCNVector3(0, 0, 0)
+                        s.rootNode.addChildNode(node)
+                        
+                        let lightNode = SCNNode()
+                        lightNode.light = SCNLight()
+                        lightNode.light?.type = .omni
+                        lightNode.position = SCNVector3(0, 0, 10)
+                        s.rootNode.addChildNode(lightNode)
+                        
+                        let ambientLightNode = SCNNode()
+                        ambientLightNode.light = SCNLight()
+                        ambientLightNode.light?.type = .ambient
+                        ambientLightNode.light?.color = UIColor.darkGray
+                        s.rootNode.addChildNode(ambientLightNode)
+                        
+                        return s
+                    }(),
+                    options: [.allowsCameraControl, .autoenablesDefaultLighting]
+                )
+                .frame(maxHeight: 300)
+                .background(Color.white.opacity(0.1))
+                .cornerRadius(12)
+            } else {
+                Text("Ожидание данных (наведи на лицо/ухо)...")
+                    .frame(maxHeight: 300)
+                    .foregroundColor(.white)
+            }
+            
+            ScrollView {
+                VStack(spacing: 16) {
+                    sliderRow(title: "Bilateral Radius", value: $scanner.debugBilateralRadius, in: 1...15)
+                    sliderRow(title: "Spatial Sigma", value: $scanner.debugSpatialSigma, in: 0.1...10.0)
+                    sliderRow(title: "Range Sigma", value: $scanner.debugRangeSigma, in: 0.001...0.050)
+                    sliderRow(title: "Taubin Iters", value: $scanner.debugTaubinIterations, in: 0...50)
+                }
+                .padding()
+                .background(Color.black.opacity(0.8))
+                .cornerRadius(12)
+            }
+            
+            bottomControlPanel
+        }
+        .padding()
+    }
+    
+    private func sliderRow(title: String, value: Binding<Float>, in range: ClosedRange<Float>) -> some View {
+        VStack(alignment: .leading) {
+            Text("\(title): \(String(format: "%.3f", value.wrappedValue))")
+                .foregroundColor(.white)
+                .font(.caption)
+            Slider(value: value, in: range)
+                .tint(.cyan)
+        }
     }
 }

@@ -33,7 +33,11 @@ public final class DepthPointCloudProcessor {
         avgHeight: Int = 0,
         stage: ScanStage,
         step: Int = 2,
-        liquidGlassSmoothing: Bool = true
+        liquidGlassSmoothing: Bool = true,
+        tuningRadius: Int = 5,
+        tuningSpatialSigma: Float = 4.0,
+        tuningRangeSigma: Float = 0.015,
+        tuningTaubinIters: Int = 20
     ) -> ScannedMesh {
         if stage == .centerFace {
             return generateFaceGeometryMesh(faceAnchor: faceAnchor, frame: frame)
@@ -83,9 +87,10 @@ public final class DepthPointCloudProcessor {
             input: rawDepthBuffer,
             width: depthWidth,
             height: depthHeight,
-            spatialSigma: 4.0,
-            rangeSigma: 0.015,
-            maxDiff: 0.025
+            radius: tuningRadius,
+            spatialSigma: tuningSpatialSigma,
+            rangeSigma: tuningRangeSigma,
+            maxDiff: tuningRangeSigma * 1.5
         )
         
         let intrinsics: simd_float3x3
@@ -409,7 +414,7 @@ public final class DepthPointCloudProcessor {
             var positions = cleanVertices.map { $0.position }
             let lambda: Float = 0.50
             let mu: Float = -0.53
-            let iterations = 20
+            let iterations = tuningTaubinIters
             
             for _ in 0..<iterations {
                 var shrinkPos = positions
@@ -442,17 +447,16 @@ public final class DepthPointCloudProcessor {
         
         return ScannedMesh(vertices: cleanVertices, triangles: triangles)
     }
-    
     private func bilateralFilterDepth(
         input: [Float],
         width: Int,
         height: Int,
+        radius: Int = 5,
         spatialSigma: Float = 4.0,
         rangeSigma: Float = 0.015,
         maxDiff: Float = 0.025
     ) -> [Float] {
         var output = input
-        let radius = 5
         let spatialWeights: [[Float]] = {
             let size = radius * 2 + 1
             var w = [[Float]](repeating: [Float](repeating: 0, count: size), count: size)

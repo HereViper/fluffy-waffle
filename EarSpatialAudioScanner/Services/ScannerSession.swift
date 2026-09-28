@@ -35,7 +35,7 @@ public enum ScanStage: Equatable {
         case .turnHeadRightFull:
             return "Поверните голову вправо до конца (профиль уха)"
         case .exporting:
-            return "Усреднение и сборка 3D модели..."
+            return "Серийное усреднение и сборка 3D модели..."
         case .finished:
             return "Сканирование успешно завершено"
         case .error(let msg):
@@ -114,23 +114,28 @@ public final class ScannerSession: NSObject, ObservableObject {
     @Published public private(set) var totalVerticesCount: Int = 0
     @Published public var isLiquidGlassEnabled: Bool = true
     
+    @Published public private(set) var currentBurstCount: Int = 0
+    public let targetBurstCount: Int = 7
+    
     public let session = ARSession()
     
     private let speechSynthesizer = AVSpeechSynthesizer()
-    private let hapticGenerator = UIImpactFeedbackGenerator(style: .heavy)
+    private let completionHaptic = UIImpactFeedbackGenerator(style: .heavy)
+    private let lightTapGenerator = UIImpactFeedbackGenerator(style: .light)
     private let ciContext = CIContext(options: nil)
     private var snapshots: [CaptureSnapshot] = []
     private var latestDepthData: AVDepthData?
     private let depthAccumulator = DepthTemporalAccumulator()
     
-    private var holdStartTime: Date?
-    private let holdDurationRequired: TimeInterval = 0.85
+    private var lastBurstCaptureTime: Date?
     private var isCapturingStage: Bool = false
     
     override private init() {
         super.init()
         session.delegate = self
         configureAudioSession()
+        lightTapGenerator.prepare()
+        completionHaptic.prepare()
     }
     
     private func configureAudioSession() {
@@ -153,7 +158,8 @@ public final class ScannerSession: NSObject, ObservableObject {
         totalVerticesCount = 0
         latestDepthData = nil
         targetHoldProgress = 0.0
-        holdStartTime = nil
+        currentBurstCount = 0
+        lastBurstCaptureTime = nil
         isCapturingStage = false
         depthAccumulator.reset()
         
@@ -164,14 +170,15 @@ public final class ScannerSession: NSObject, ObservableObject {
         session.run(config, options: [.resetTracking, .removeExistingAnchors])
         
         currentStage = .centerFace
-        speak("Уберите волосы за уши. Держите телефон прямо перед лицом на расстоянии сорока сантиметров.")
+        speak("Уберите волосы за уши. Держите телефон прямо перед лицом.")
     }
     
     public func stopScanning() {
         session.pause()
         currentStage = .idle
         targetHoldProgress = 0.0
-        holdStartTime = nil
+        currentBurstCount = 0
+        lastBurstCaptureTime = nil
         depthAccumulator.reset()
     }
     
@@ -185,10 +192,10 @@ public final class ScannerSession: NSObject, ObservableObject {
         speechSynthesizer.speak(utterance)
     }
     
-    private func playCaptureCue() {
+    private func playCompletionCue() {
         AudioServicesPlaySystemSound(1057)
-        hapticGenerator.prepare()
-        hapticGenerator.impactOccurred()
+        completionHaptic.prepare()
+        completionHaptic.impactOccurred()
     }
     
     private func evaluateStageCondition(yaw: Float, distance: Float) -> Bool {
@@ -215,7 +222,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     private func handleStageCompletion(frame: ARFrame, faceAnchor: ARFaceAnchor) {
         guard !isCapturingStage else { return }
         isCapturingStage = true
-        playCaptureCue()
+        playCompletionCue()
         
         let stage = currentStage
         let yaw = currentYaw
@@ -276,7 +283,8 @@ public final class ScannerSession: NSObject, ObservableObject {
     }
     
     private func proceedAfterCapture(completedStage: ScanStage) {
-        holdStartTime = nil
+        currentBurstCount = 0
+        lastBurstCaptureTime = nil
         targetHoldProgress = 0.0
         isCapturingStage = false
         depthAccumulator.reset()
@@ -284,13 +292,13 @@ public final class ScannerSession: NSObject, ObservableObject {
         switch completedStage {
         case .centerFace:
             currentStage = .turnHeadLeftPartial
-            speak("Отлично. Теперь поверните голову чуть-чуть влево и замрите")
+            speak("Отлично. Теперь поверните голову чуть-чуть влево")
         case .turnHeadLeftPartial:
             currentStage = .turnHeadLeftFull
             speak("Зафиксировано. Теперь поверните голову влево до конца, показывая ухо")
         case .turnHeadLeftFull:
             currentStage = .turnHeadRightPartial
-            speak("Отлично. Теперь поверните голову чуть-чуть вправо и замрите")
+            speak("Отлично. Теперь поверните голову чуть-чуть вправо")
         case .turnHeadRightPartial:
             currentStage = .turnHeadRightFull
             speak("Зафиксировано. Теперь поверните голову вправо до конца, показывая правое ухо")
@@ -303,7 +311,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     
     private func finishAndExport() {
         currentStage = .exporting
-        speak("Сканирование завершено. Формирую усредненную высокоточную трехмерную модель.")
+        speak("Сканирование завершено. Формирую усредненную трехмерную модель высокой четкости.")
         session.pause()
         
         let snaps = self.snapshots
@@ -320,7 +328,7 @@ public final class ScannerSession: NSObject, ObservableObject {
                 await MainActor.run {
                     self.exportedZipURL = zipURL
                     self.currentStage = .finished(zipURL)
-                    self.playCaptureCue()
+                    self.playCompletionCue()
                     self.speak("Файл готов к отправке на компьютер.")
                 }
             } catch {
@@ -345,7 +353,8 @@ extension ScannerSession: ARSessionDelegate {
         guard let faceAnchor = frame.anchors.compactMap({ $0 as? ARFaceAnchor }).first else {
             Task { @MainActor in
                 self.isFaceDetected = false
-                self.holdStartTime = nil
+                self.currentBurstCount = 0
+                self.lastBurstCaptureTime = nil
                 self.targetHoldProgress = 0.0
                 self.depthAccumulator.reset()
             }
@@ -373,25 +382,38 @@ extension ScannerSession: ARSessionDelegate {
                 return
             }
             
+            guard !self.isCapturingStage else { return }
+            
             let isConditionMet = self.evaluateStageCondition(yaw: yaw, distance: distance)
             
             if isConditionMet {
-                if let depth = frame.capturedDepthData ?? self.latestDepthData {
-                    self.depthAccumulator.addFrame(depthData: depth)
+                let now = Date()
+                let interval: TimeInterval = 0.11
+                let shouldCapture: Bool
+                if let lastTime = self.lastBurstCaptureTime {
+                    shouldCapture = now.timeIntervalSince(lastTime) >= interval
+                } else {
+                    shouldCapture = true
                 }
                 
-                if let startTime = self.holdStartTime {
-                    let elapsed = Date().timeIntervalSince(startTime)
-                    self.targetHoldProgress = Float(min(elapsed / self.holdDurationRequired, 1.0))
-                    if elapsed >= self.holdDurationRequired && self.depthAccumulator.sampleCount >= 4 {
+                if shouldCapture && self.currentBurstCount < self.targetBurstCount {
+                    if let depth = frame.capturedDepthData ?? self.latestDepthData {
+                        self.depthAccumulator.addFrame(depthData: depth)
+                    }
+                    self.currentBurstCount += 1
+                    self.lastBurstCaptureTime = now
+                    self.targetHoldProgress = Float(self.currentBurstCount) / Float(self.targetBurstCount)
+                    
+                    self.lightTapGenerator.prepare()
+                    self.lightTapGenerator.impactOccurred()
+                    
+                    if self.currentBurstCount >= self.targetBurstCount {
                         self.handleStageCompletion(frame: frame, faceAnchor: faceAnchor)
                     }
-                } else {
-                    self.holdStartTime = Date()
-                    self.targetHoldProgress = 0.05
                 }
             } else {
-                self.holdStartTime = nil
+                self.currentBurstCount = 0
+                self.lastBurstCaptureTime = nil
                 self.targetHoldProgress = 0.0
                 self.depthAccumulator.reset()
             }

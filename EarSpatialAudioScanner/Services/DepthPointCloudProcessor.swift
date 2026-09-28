@@ -191,18 +191,18 @@ public final class DepthPointCloudProcessor {
                 
                 switch stage {
                 case .centerFace:
-                    guard abs(headPos.x) <= 0.050 && headPos.z >= 0.005 else { continue }
+                    guard abs(headPos.x) <= 0.055 && headPos.z >= -0.010 else { continue }
                 case .turnHeadLeftPartial, .turnHeadLeftFull:
                     if camPosInHead.x > 0 {
-                        guard headPos.x >= 0.028 else { continue }
+                        guard headPos.x >= 0.020 else { continue }
                     } else {
-                        guard headPos.x <= -0.028 else { continue }
+                        guard headPos.x <= -0.020 else { continue }
                     }
                 case .turnHeadRightPartial, .turnHeadRightFull:
                     if camPosInHead.x > 0 {
-                        guard headPos.x >= 0.028 else { continue }
+                        guard headPos.x >= 0.020 else { continue }
                     } else {
-                        guard headPos.x <= -0.028 else { continue }
+                        guard headPos.x <= -0.020 else { continue }
                     }
                 default:
                     break
@@ -245,7 +245,7 @@ public final class DepthPointCloudProcessor {
         
         var triangles: [simd_int3] = []
         triangles.reserveCapacity(vertices.count * 2)
-        let maxEdgeDistance: Float = 0.008
+        let maxEdgeDistance: Float = 0.016
         
         for gy in 0..<(gridRows - 1) {
             for gx in 0..<(gridCols - 1) {

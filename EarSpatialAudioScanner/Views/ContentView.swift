@@ -148,12 +148,12 @@ public struct ContentView: View {
             VStack(spacing: 8) {
                 indicatorSymbol
                 
-                if scanner.targetHoldProgress > 0 {
+                if scanner.currentBurstCount > 0 {
                     VStack(spacing: 2) {
-                        Text(String(format: "%.0f%%", scanner.targetHoldProgress * 100))
-                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                        Text("\(scanner.currentBurstCount) / \(scanner.targetBurstCount)")
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
                             .foregroundColor(scanner.isLiquidGlassEnabled ? .cyan : .green)
-                        Text("Усреднение кадров...")
+                        Text("Серия кадров...")
                             .font(.system(size: 11, weight: .medium))
                             .foregroundColor(.white.opacity(0.8))
                     }

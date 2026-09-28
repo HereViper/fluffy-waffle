@@ -180,7 +180,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         let config = ARFaceTrackingConfiguration()
         config.isLightEstimationEnabled = true
         config.providesAudioData = false
-        if ARFaceTrackingConfiguration.isWorldTrackingSupported {
+        if ARFaceTrackingConfiguration.supportsWorldTracking {
             config.isWorldTrackingEnabled = true
         }
         

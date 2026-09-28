@@ -83,9 +83,9 @@ public final class DepthPointCloudProcessor {
             input: rawDepthBuffer,
             width: depthWidth,
             height: depthHeight,
-            spatialSigma: liquidGlassSmoothing ? 1.8 : 1.5,
-            rangeSigma: liquidGlassSmoothing ? 0.006 : 0.005,
-            maxDiff: liquidGlassSmoothing ? 0.010 : 0.008
+            spatialSigma: 4.0,
+            rangeSigma: 0.015,
+            maxDiff: 0.025
         )
         
         let intrinsics: simd_float3x3
@@ -447,12 +447,12 @@ public final class DepthPointCloudProcessor {
         input: [Float],
         width: Int,
         height: Int,
-        spatialSigma: Float = 1.6,
-        rangeSigma: Float = 0.005,
-        maxDiff: Float = 0.009
+        spatialSigma: Float = 4.0,
+        rangeSigma: Float = 0.015,
+        maxDiff: Float = 0.025
     ) -> [Float] {
         var output = input
-        let radius = 3
+        let radius = 5
         let spatialWeights: [[Float]] = {
             let size = radius * 2 + 1
             var w = [[Float]](repeating: [Float](repeating: 0, count: size), count: size)

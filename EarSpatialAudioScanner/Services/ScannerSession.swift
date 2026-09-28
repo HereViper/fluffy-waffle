@@ -129,7 +129,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     @Published public var isManualMode: Bool = false
     
     @Published public private(set) var currentBurstCount: Int = 0
-    public let targetBurstCount: Int = 5
+    public let targetBurstCount: Int = 1
     
     public let session = ARSession()
     

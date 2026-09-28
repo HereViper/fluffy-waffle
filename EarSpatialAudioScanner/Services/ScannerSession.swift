@@ -505,7 +505,8 @@ extension ScannerSession: ARSessionDelegate {
                         tuningRadius: Int(debugBilateralRadius),
                         tuningSpatialSigma: debugSpatialSigma,
                         tuningRangeSigma: debugRangeSigma,
-                        tuningTaubinIters: Int(debugTaubinIterations)
+                        tuningTaubinIters: Int(debugTaubinIterations),
+                        debugBypassCulling: true
                     )
                     
                     let geom = self.buildSCNGeometry(from: mesh)

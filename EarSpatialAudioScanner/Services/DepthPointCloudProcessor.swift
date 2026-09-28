@@ -37,9 +37,10 @@ public final class DepthPointCloudProcessor {
         tuningRadius: Int = 5,
         tuningSpatialSigma: Float = 4.0,
         tuningRangeSigma: Float = 0.015,
-        tuningTaubinIters: Int = 20
+        tuningTaubinIters: Int = 20,
+        debugBypassCulling: Bool = false
     ) -> ScannedMesh {
-        if stage == .centerFace {
+        if stage == .centerFace && !debugBypassCulling {
             return generateFaceGeometryMesh(faceAnchor: faceAnchor, frame: frame)
         }
         
@@ -190,21 +191,23 @@ public final class DepthPointCloudProcessor {
                 let headPoint = simd_mul(cameraToHead, camPoint)
                 let headPos = simd_float3(headPoint.x, headPoint.y, headPoint.z)
                 
-                guard headPos.y >= -0.07 && headPos.y <= 0.07 else {
-                    continue
-                }
-                guard headPos.z >= -0.09 && headPos.z <= 0.03 else {
-                    continue
-                }
-                
-                if isRightEar {
-                    guard headPos.x >= 0.035 && headPos.x <= 0.115 else { continue }
-                } else {
-                    guard headPos.x <= -0.035 && headPos.x >= -0.115 else { continue }
-                }
-                
-                guard simd_distance(headPos, earCenter) <= 0.08 else {
-                    continue
+                if !debugBypassCulling {
+                    guard headPos.y >= -0.07 && headPos.y <= 0.07 else {
+                        continue
+                    }
+                    guard headPos.z >= -0.09 && headPos.z <= 0.03 else {
+                        continue
+                    }
+                    
+                    if isRightEar {
+                        guard headPos.x >= 0.035 && headPos.x <= 0.115 else { continue }
+                    } else {
+                        guard headPos.x <= -0.035 && headPos.x >= -0.115 else { continue }
+                    }
+                    
+                    guard simd_distance(headPos, earCenter) <= 0.08 else {
+                        continue
+                    }
                 }
                 
                 let imgX = min(max(Int(u * imgScaleX), 0), imageWidth - 1)

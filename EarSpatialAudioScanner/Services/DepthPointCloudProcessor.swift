@@ -28,6 +28,9 @@ public final class DepthPointCloudProcessor {
         frame: ARFrame,
         faceAnchor: ARFaceAnchor,
         customDepthData: AVDepthData? = nil,
+        averagedDepth: [Float]? = nil,
+        avgWidth: Int = 0,
+        avgHeight: Int = 0,
         stage: ScanStage,
         step: Int = 2,
         liquidGlassSmoothing: Bool = false
@@ -51,8 +54,9 @@ public final class DepthPointCloudProcessor {
             return fallbackFaceGeometry(faceAnchor: faceAnchor)
         }
         
-        let depthWidth = CVPixelBufferGetWidth(depthMap)
-        let depthHeight = CVPixelBufferGetHeight(depthMap)
+        let useAveraged = (averagedDepth != nil && avgWidth > 0 && avgHeight > 0)
+        let depthWidth = useAveraged ? avgWidth : CVPixelBufferGetWidth(depthMap)
+        let depthHeight = useAveraged ? avgHeight : CVPixelBufferGetHeight(depthMap)
         let depthBytesPerRow = CVPixelBufferGetBytesPerRow(depthMap)
         
         let imageWidth = CVPixelBufferGetWidth(imageBuffer)
@@ -119,13 +123,17 @@ public final class DepthPointCloudProcessor {
         
         var gridY = 0
         for y in stride(from: 0, to: depthHeight, by: step) {
-            let rowStart = depthAddress.advanced(by: y * depthBytesPerRow)
-            let rowFloats = rowStart.assumingMemoryBound(to: Float32.self)
+            let rowFloats = depthAddress.advanced(by: y * depthBytesPerRow).assumingMemoryBound(to: Float32.self)
             var gridX = 0
             
             for x in stride(from: 0, to: depthWidth, by: step) {
                 defer { gridX += 1 }
-                var depth = rowFloats[x]
+                var depth: Float
+                if let avg = averagedDepth, useAveraged {
+                    depth = avg[y * depthWidth + x]
+                } else {
+                    depth = rowFloats[x]
+                }
                 
                 guard !depth.isNaN, !depth.isInfinite, depth >= 0.15, depth <= 0.70 else {
                     continue
@@ -133,18 +141,23 @@ public final class DepthPointCloudProcessor {
                 
                 var filteredDepth = depth
                 var filterWeight: Float = 1.0
-                let radius = liquidGlassSmoothing ? 3 : 2
-                let depthTolerance: Float = liquidGlassSmoothing ? 0.012 : 0.007
+                let radius = 2
+                let depthTolerance: Float = liquidGlassSmoothing ? 0.010 : 0.006
                 
                 for dy in -radius...radius {
                     let ny = y + dy
                     guard ny >= 0 && ny < depthHeight else { continue }
-                    let nRow = depthAddress.advanced(by: ny * depthBytesPerRow).assumingMemoryBound(to: Float32.self)
                     for dx in -radius...radius {
                         if dx == 0 && dy == 0 { continue }
                         let nx = x + dx
                         guard nx >= 0 && nx < depthWidth else { continue }
-                        let nd = nRow[nx]
+                        let nd: Float
+                        if let avg = averagedDepth, useAveraged {
+                            nd = avg[ny * depthWidth + nx]
+                        } else {
+                            let nRow = depthAddress.advanced(by: ny * depthBytesPerRow).assumingMemoryBound(to: Float32.self)
+                            nd = nRow[nx]
+                        }
                         if !nd.isNaN && !nd.isInfinite && abs(nd - depth) < depthTolerance {
                             let spatialDistSq = Float(dx * dx + dy * dy)
                             let w = 1.0 / (1.0 + spatialDistSq * 0.5)
@@ -172,24 +185,24 @@ public final class DepthPointCloudProcessor {
                     continue
                 }
                 let radialDistXZ = hypot(headPos.x, headPos.z)
-                guard radialDistXZ <= 0.132 else {
+                guard radialDistXZ <= 0.135 else {
                     continue
                 }
                 
                 switch stage {
                 case .centerFace:
-                    guard abs(headPos.x) <= 0.048 && headPos.z >= 0.005 else { continue }
+                    guard abs(headPos.x) <= 0.050 && headPos.z >= 0.005 else { continue }
                 case .turnHeadLeftPartial, .turnHeadLeftFull:
                     if camPosInHead.x > 0 {
-                        guard headPos.x >= 0.032 else { continue }
+                        guard headPos.x >= 0.028 else { continue }
                     } else {
-                        guard headPos.x <= -0.032 else { continue }
+                        guard headPos.x <= -0.028 else { continue }
                     }
                 case .turnHeadRightPartial, .turnHeadRightFull:
                     if camPosInHead.x > 0 {
-                        guard headPos.x >= 0.032 else { continue }
+                        guard headPos.x >= 0.028 else { continue }
                     } else {
-                        guard headPos.x <= -0.032 else { continue }
+                        guard headPos.x <= -0.028 else { continue }
                     }
                 default:
                     break
@@ -232,7 +245,7 @@ public final class DepthPointCloudProcessor {
         
         var triangles: [simd_int3] = []
         triangles.reserveCapacity(vertices.count * 2)
-        let maxEdgeDistance: Float = 0.009
+        let maxEdgeDistance: Float = 0.008
         
         for gy in 0..<(gridRows - 1) {
             for gx in 0..<(gridCols - 1) {

@@ -25,22 +25,78 @@ public enum ScanStage: Equatable {
         case .idle:
             return "Нажмите «Начать сканирование»"
         case .centerFace:
-            return "Расположите телефон перед лицом"
+            return "Держите лицо прямо (уберите волосы за уши)"
         case .turnHeadLeftPartial:
             return "Поверните голову немного влево (раковина)"
         case .turnHeadLeftFull:
-            return "Поверните голову влево до конца (профиль)"
+            return "Поверните голову влево до конца (профиль уха)"
         case .turnHeadRightPartial:
             return "Поверните голову немного вправо (раковина)"
         case .turnHeadRightFull:
-            return "Поверните голову вправо до конца (профиль)"
+            return "Поверните голову вправо до конца (профиль уха)"
         case .exporting:
-            return "Генерация 3D модели и архива..."
+            return "Усреднение и сборка 3D модели..."
         case .finished:
             return "Сканирование успешно завершено"
         case .error(let msg):
             return "Ошибка: \(msg)"
         }
+    }
+}
+
+final class DepthTemporalAccumulator {
+    var width: Int = 0
+    var height: Int = 0
+    var depthSum: [Float] = []
+    var depthCount: [Int] = []
+    var sampleCount: Int = 0
+    
+    func reset() {
+        sampleCount = 0
+        depthSum.removeAll(keepingCapacity: true)
+        depthCount.removeAll(keepingCapacity: true)
+    }
+    
+    func addFrame(depthData: AVDepthData) {
+        let converted = depthData.converting(toDepthDataType: kCVPixelFormatType_DepthFloat32)
+        let depthMap = converted.depthDataMap
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(depthMap) else { return }
+        
+        let w = CVPixelBufferGetWidth(depthMap)
+        let h = CVPixelBufferGetHeight(depthMap)
+        let bpr = CVPixelBufferGetBytesPerRow(depthMap)
+        
+        if width != w || height != h || depthSum.count != w * h {
+            width = w
+            height = h
+            depthSum = [Float](repeating: 0, count: w * h)
+            depthCount = [Int](repeating: 0, count: w * h)
+        }
+        
+        for y in 0..<h {
+            let row = base.advanced(by: y * bpr).assumingMemoryBound(to: Float32.self)
+            let offset = y * w
+            for x in 0..<w {
+                let d = row[x]
+                if !d.isNaN && !d.isInfinite && d >= 0.15 && d <= 0.70 {
+                    depthSum[offset + x] += d
+                    depthCount[offset + x] += 1
+                }
+            }
+        }
+        sampleCount += 1
+    }
+    
+    func buildAveragedBuffer() -> (buffer: [Float], width: Int, height: Int)? {
+        guard sampleCount > 0, width > 0, height > 0 else { return nil }
+        var result = [Float](repeating: 0, count: width * height)
+        for i in 0..<(width * height) {
+            let c = depthCount[i]
+            result[i] = c > 0 ? (depthSum[i] / Float(c)) : .nan
+        }
+        return (result, width, height)
     }
 }
 
@@ -65,9 +121,10 @@ public final class ScannerSession: NSObject, ObservableObject {
     private let ciContext = CIContext(options: nil)
     private var snapshots: [CaptureSnapshot] = []
     private var latestDepthData: AVDepthData?
+    private let depthAccumulator = DepthTemporalAccumulator()
     
     private var holdStartTime: Date?
-    private let holdDurationRequired: TimeInterval = 0.6
+    private let holdDurationRequired: TimeInterval = 0.85
     private var isCapturingStage: Bool = false
     
     override private init() {
@@ -98,6 +155,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         targetHoldProgress = 0.0
         holdStartTime = nil
         isCapturingStage = false
+        depthAccumulator.reset()
         
         let config = ARFaceTrackingConfiguration()
         config.isLightEstimationEnabled = true
@@ -106,7 +164,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         session.run(config, options: [.resetTracking, .removeExistingAnchors])
         
         currentStage = .centerFace
-        speak("Держите телефон прямо перед лицом на расстоянии около сорока сантиметров")
+        speak("Уберите волосы за уши. Держите телефон прямо перед лицом на расстоянии сорока сантиметров.")
     }
     
     public func stopScanning() {
@@ -114,6 +172,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         currentStage = .idle
         targetHoldProgress = 0.0
         holdStartTime = nil
+        depthAccumulator.reset()
     }
     
     private func speak(_ text: String) {
@@ -161,7 +220,9 @@ public final class ScannerSession: NSObject, ObservableObject {
         let stage = currentStage
         let yaw = currentYaw
         let pitch = currentPitch
-        let depthToUse = frame.capturedDepthData ?? self.latestDepthData
+        
+        let avgData = self.depthAccumulator.buildAveragedBuffer()
+        self.depthAccumulator.reset()
         
         let pixelBuffer = frame.capturedImage
         CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
@@ -175,11 +236,16 @@ public final class ScannerSession: NSObject, ObservableObject {
         
         let liquidGlass = self.isLiquidGlassEnabled
         let currentScanStage = stage
+        let depthToUse = frame.capturedDepthData ?? self.latestDepthData
+        
         Task.detached(priority: .userInitiated) {
             let mesh = DepthPointCloudProcessor.shared.processFrame(
                 frame: frame,
                 faceAnchor: faceAnchor,
                 customDepthData: depthToUse,
+                averagedDepth: avgData?.buffer,
+                avgWidth: avgData?.width ?? 0,
+                avgHeight: avgData?.height ?? 0,
                 stage: currentScanStage,
                 step: 2,
                 liquidGlassSmoothing: liquidGlass
@@ -213,20 +279,21 @@ public final class ScannerSession: NSObject, ObservableObject {
         holdStartTime = nil
         targetHoldProgress = 0.0
         isCapturingStage = false
+        depthAccumulator.reset()
         
         switch completedStage {
         case .centerFace:
             currentStage = .turnHeadLeftPartial
-            speak("Отлично. Теперь поверните голову чуть-чуть влево")
+            speak("Отлично. Теперь поверните голову чуть-чуть влево и замрите")
         case .turnHeadLeftPartial:
             currentStage = .turnHeadLeftFull
-            speak("Зафиксировано. Теперь поверните голову влево до конца")
+            speak("Зафиксировано. Теперь поверните голову влево до конца, показывая ухо")
         case .turnHeadLeftFull:
             currentStage = .turnHeadRightPartial
-            speak("Отлично. Теперь поверните голову чуть-чуть вправо")
+            speak("Отлично. Теперь поверните голову чуть-чуть вправо и замрите")
         case .turnHeadRightPartial:
             currentStage = .turnHeadRightFull
-            speak("Зафиксировано. Теперь поверните голову вправо до конца")
+            speak("Зафиксировано. Теперь поверните голову вправо до конца, показывая правое ухо")
         case .turnHeadRightFull:
             finishAndExport()
         default:
@@ -236,7 +303,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     
     private func finishAndExport() {
         currentStage = .exporting
-        speak("Сканирование завершено. Формирую трехмерную модель.")
+        speak("Сканирование завершено. Формирую усредненную высокоточную трехмерную модель.")
         session.pause()
         
         let snaps = self.snapshots
@@ -280,6 +347,7 @@ extension ScannerSession: ARSessionDelegate {
                 self.isFaceDetected = false
                 self.holdStartTime = nil
                 self.targetHoldProgress = 0.0
+                self.depthAccumulator.reset()
             }
             return
         }
@@ -308,10 +376,14 @@ extension ScannerSession: ARSessionDelegate {
             let isConditionMet = self.evaluateStageCondition(yaw: yaw, distance: distance)
             
             if isConditionMet {
+                if let depth = frame.capturedDepthData ?? self.latestDepthData {
+                    self.depthAccumulator.addFrame(depthData: depth)
+                }
+                
                 if let startTime = self.holdStartTime {
                     let elapsed = Date().timeIntervalSince(startTime)
                     self.targetHoldProgress = Float(min(elapsed / self.holdDurationRequired, 1.0))
-                    if elapsed >= self.holdDurationRequired {
+                    if elapsed >= self.holdDurationRequired && self.depthAccumulator.sampleCount >= 4 {
                         self.handleStageCompletion(frame: frame, faceAnchor: faceAnchor)
                     }
                 } else {
@@ -321,6 +393,7 @@ extension ScannerSession: ARSessionDelegate {
             } else {
                 self.holdStartTime = nil
                 self.targetHoldProgress = 0.0
+                self.depthAccumulator.reset()
             }
         }
     }

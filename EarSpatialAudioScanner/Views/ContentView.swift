@@ -89,6 +89,20 @@ public struct ContentView: View {
                 )
                 .cornerRadius(12)
             
+            if scanner.currentStage == .turnHeadLeftFull || scanner.currentStage == .turnHeadRightFull {
+                HStack(spacing: 6) {
+                    Image(systemName: "ear")
+                        .font(.system(size: 13))
+                    Text("Уберите волосы за ухо для четкого захвата")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .foregroundColor(.yellow)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                .background(Color.black.opacity(0.55))
+                .cornerRadius(8)
+            }
+            
             if scanner.isFaceDetected {
                 HStack(spacing: 16) {
                     Label(
@@ -131,13 +145,18 @@ public struct ContentView: View {
                 .frame(width: 240, height: 240)
                 .animation(.linear(duration: 0.1), value: scanner.targetHoldProgress)
             
-            VStack(spacing: 12) {
+            VStack(spacing: 8) {
                 indicatorSymbol
                 
                 if scanner.targetHoldProgress > 0 {
-                    Text(String(format: "%.0f%%", scanner.targetHoldProgress * 100))
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .foregroundColor(scanner.isLiquidGlassEnabled ? .cyan : .green)
+                    VStack(spacing: 2) {
+                        Text(String(format: "%.0f%%", scanner.targetHoldProgress * 100))
+                            .font(.system(size: 18, weight: .bold, design: .rounded))
+                            .foregroundColor(scanner.isLiquidGlassEnabled ? .cyan : .green)
+                        Text("Усреднение кадров...")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.white.opacity(0.8))
+                    }
                 }
             }
         }

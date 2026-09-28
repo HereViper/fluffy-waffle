@@ -25,17 +25,17 @@ public enum ScanStage: Equatable {
         case .idle:
             return "Нажмите «Начать сканирование»"
         case .centerFace:
-            return "Держите лицо прямо (уберите волосы за уши)"
+            return "Лицо прямо (дистанция 30 см, волосы назад)"
         case .turnHeadLeftPartial:
-            return "Поверните голову немного влево (раковина)"
+            return "Левое ухо 3/4: отведите телефон чуть влево"
         case .turnHeadLeftFull:
-            return "Поверните голову влево до конца (профиль уха)"
+            return "Левое ухо в профиль: камера прямо в ухо (25 см)"
         case .turnHeadRightPartial:
-            return "Поверните голову немного вправо (раковина)"
+            return "Правое ухо 3/4: отведите телефон чуть вправо"
         case .turnHeadRightFull:
-            return "Поверните голову вправо до конца (профиль уха)"
+            return "Правое ухо в профиль: камера прямо в ухо (25 см)"
         case .exporting:
-            return "Серийное усреднение и сборка 3D модели..."
+            return "Обработка и сборка 3D анатомической модели..."
         case .finished:
             return "Сканирование успешно завершено"
         case .error(let msg):
@@ -44,17 +44,13 @@ public enum ScanStage: Equatable {
     }
 }
 
-final class DepthTemporalAccumulator {
+final class DepthMedianAccumulator {
     var width: Int = 0
     var height: Int = 0
-    var depthSum: [Float] = []
-    var depthCount: [Int] = []
-    var sampleCount: Int = 0
+    var frames: [[Float]] = []
     
     func reset() {
-        sampleCount = 0
-        depthSum.removeAll(keepingCapacity: true)
-        depthCount.removeAll(keepingCapacity: true)
+        frames.removeAll(keepingCapacity: true)
     }
     
     func addFrame(depthData: AVDepthData) {
@@ -68,33 +64,51 @@ final class DepthTemporalAccumulator {
         let h = CVPixelBufferGetHeight(depthMap)
         let bpr = CVPixelBufferGetBytesPerRow(depthMap)
         
-        if width != w || height != h || depthSum.count != w * h {
-            width = w
-            height = h
-            depthSum = [Float](repeating: 0, count: w * h)
-            depthCount = [Int](repeating: 0, count: w * h)
-        }
+        width = w
+        height = h
         
+        var buffer = [Float](repeating: .nan, count: w * h)
         for y in 0..<h {
             let row = base.advanced(by: y * bpr).assumingMemoryBound(to: Float32.self)
             let offset = y * w
             for x in 0..<w {
                 let d = row[x]
-                if !d.isNaN && !d.isInfinite && d >= 0.15 && d <= 0.70 {
-                    depthSum[offset + x] += d
-                    depthCount[offset + x] += 1
+                if !d.isNaN && !d.isInfinite && d >= 0.15 && d <= 0.65 {
+                    buffer[offset + x] = d
                 }
             }
         }
-        sampleCount += 1
+        frames.append(buffer)
     }
     
-    func buildAveragedBuffer() -> (buffer: [Float], width: Int, height: Int)? {
-        guard sampleCount > 0, width > 0, height > 0 else { return nil }
-        var result = [Float](repeating: 0, count: width * height)
-        for i in 0..<(width * height) {
-            let c = depthCount[i]
-            result[i] = c > 0 ? (depthSum[i] / Float(c)) : .nan
+    func buildMedianBuffer() -> (buffer: [Float], width: Int, height: Int)? {
+        guard !frames.isEmpty, width > 0, height > 0 else { return nil }
+        let total = width * height
+        let frameCount = frames.count
+        
+        if frameCount == 1 {
+            return (frames[0], width, height)
+        }
+        
+        var result = [Float](repeating: .nan, count: total)
+        for i in 0..<total {
+            var valid: [Float] = []
+            for f in 0..<frameCount {
+                let v = frames[f][i]
+                if !v.isNaN {
+                    valid.append(v)
+                }
+            }
+            if valid.isEmpty {
+                result[i] = .nan
+            } else if valid.count == 1 {
+                result[i] = valid[0]
+            } else if valid.count == 2 {
+                result[i] = (valid[0] + valid[1]) * 0.5
+            } else {
+                valid.sort()
+                result[i] = valid[valid.count / 2]
+            }
         }
         return (result, width, height)
     }
@@ -115,7 +129,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     @Published public var isLiquidGlassEnabled: Bool = true
     
     @Published public private(set) var currentBurstCount: Int = 0
-    public let targetBurstCount: Int = 7
+    public let targetBurstCount: Int = 3
     
     public let session = ARSession()
     
@@ -125,7 +139,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     private let ciContext = CIContext(options: nil)
     private var snapshots: [CaptureSnapshot] = []
     private var latestDepthData: AVDepthData?
-    private let depthAccumulator = DepthTemporalAccumulator()
+    private let depthAccumulator = DepthMedianAccumulator()
     
     private var lastBurstCaptureTime: Date?
     private var isCapturingStage: Bool = false
@@ -166,11 +180,14 @@ public final class ScannerSession: NSObject, ObservableObject {
         let config = ARFaceTrackingConfiguration()
         config.isLightEstimationEnabled = true
         config.providesAudioData = false
+        if ARFaceTrackingConfiguration.isWorldTrackingSupported {
+            config.isWorldTrackingEnabled = true
+        }
         
         session.run(config, options: [.resetTracking, .removeExistingAnchors])
         
         currentStage = .centerFace
-        speak("Уберите волосы за уши. Держите телефон прямо перед лицом.")
+        speak("Уберите волосы за уши. Держите телефон прямо перед лицом на расстоянии 30 сантиметров.")
     }
     
     public func stopScanning() {
@@ -198,22 +215,22 @@ public final class ScannerSession: NSObject, ObservableObject {
         completionHaptic.impactOccurred()
     }
     
-    private func evaluateStageCondition(yaw: Float, distance: Float) -> Bool {
-        guard distance >= 0.18 && distance <= 0.65 else {
+    private func evaluateStageCondition(yaw: Float, distance: Float, camPosInHead: simd_float3) -> Bool {
+        guard distance >= 0.18 && distance <= 0.50 else {
             return false
         }
         
         switch currentStage {
         case .centerFace:
-            return abs(yaw) <= 12.0
+            return abs(yaw) <= 12.0 && distance <= 0.42
         case .turnHeadLeftPartial:
-            return abs(yaw) >= 15.0 && abs(yaw) <= 35.0
+            return (yaw <= -12.0 || camPosInHead.x >= 0.035) && distance <= 0.40
         case .turnHeadLeftFull:
-            return abs(yaw) >= 30.0 && abs(yaw) <= 85.0
+            return (yaw <= -28.0 || camPosInHead.x >= 0.055) && distance <= 0.36
         case .turnHeadRightPartial:
-            return abs(yaw) >= 15.0 && abs(yaw) <= 35.0
+            return (yaw >= 12.0 || camPosInHead.x <= -0.035) && distance <= 0.40
         case .turnHeadRightFull:
-            return abs(yaw) >= 30.0 && abs(yaw) <= 85.0
+            return (yaw >= 28.0 || camPosInHead.x <= -0.055) && distance <= 0.36
         default:
             return false
         }
@@ -228,7 +245,7 @@ public final class ScannerSession: NSObject, ObservableObject {
         let yaw = currentYaw
         let pitch = currentPitch
         
-        let avgData = self.depthAccumulator.buildAveragedBuffer()
+        let medianData = self.depthAccumulator.buildMedianBuffer()
         self.depthAccumulator.reset()
         
         let pixelBuffer = frame.capturedImage
@@ -250,9 +267,9 @@ public final class ScannerSession: NSObject, ObservableObject {
                 frame: frame,
                 faceAnchor: faceAnchor,
                 customDepthData: depthToUse,
-                averagedDepth: avgData?.buffer,
-                avgWidth: avgData?.width ?? 0,
-                avgHeight: avgData?.height ?? 0,
+                averagedDepth: medianData?.buffer,
+                avgWidth: medianData?.width ?? 0,
+                avgHeight: medianData?.height ?? 0,
                 stage: currentScanStage,
                 step: 2,
                 liquidGlassSmoothing: liquidGlass
@@ -292,16 +309,16 @@ public final class ScannerSession: NSObject, ObservableObject {
         switch completedStage {
         case .centerFace:
             currentStage = .turnHeadLeftPartial
-            speak("Отлично. Теперь поверните голову чуть-чуть влево")
+            speak("Отлично. Теперь отведите телефон немного влево к уху")
         case .turnHeadLeftPartial:
             currentStage = .turnHeadLeftFull
-            speak("Зафиксировано. Теперь поверните голову влево до конца, показывая ухо")
+            speak("Зафиксировано. Направьте камеру прямо на левое ухо с расстояния 25 сантиметров")
         case .turnHeadLeftFull:
             currentStage = .turnHeadRightPartial
-            speak("Отлично. Теперь поверните голову чуть-чуть вправо")
+            speak("Отлично. Теперь перейдите к правому уху")
         case .turnHeadRightPartial:
             currentStage = .turnHeadRightFull
-            speak("Зафиксировано. Теперь поверните голову вправо до конца, показывая правое ухо")
+            speak("Зафиксировано. Направьте камеру прямо на правое ухо с расстояния 25 сантиметров")
         case .turnHeadRightFull:
             finishAndExport()
         default:
@@ -311,7 +328,7 @@ public final class ScannerSession: NSObject, ObservableObject {
     
     private func finishAndExport() {
         currentStage = .exporting
-        speak("Сканирование завершено. Формирую усредненную трехмерную модель высокой четкости.")
+        speak("Сканирование завершено. Формирую анатомическую трехмерную модель высокой четкости.")
         session.pause()
         
         let snaps = self.snapshots
@@ -368,6 +385,12 @@ extension ScannerSession: ARSessionDelegate {
         let pitch = asin(max(min(-r12, 1.0), -1.0)) * 180.0 / .pi
         let distance = simd_length(simd_float3(transform.columns.3.x, transform.columns.3.y, transform.columns.3.z))
         
+        let worldToHead = faceAnchor.transform.inverse
+        let cameraToWorld = frame.camera.transform
+        let cameraToHead = simd_mul(worldToHead, cameraToWorld)
+        let camPosInHead4 = simd_mul(cameraToHead, simd_float4(0, 0, 0, 1))
+        let camPosInHead = simd_float3(camPosInHead4.x, camPosInHead4.y, camPosInHead4.z)
+        
         Task { @MainActor in
             self.isFaceDetected = true
             self.currentYaw = yaw
@@ -384,11 +407,11 @@ extension ScannerSession: ARSessionDelegate {
             
             guard !self.isCapturingStage else { return }
             
-            let isConditionMet = self.evaluateStageCondition(yaw: yaw, distance: distance)
+            let isConditionMet = self.evaluateStageCondition(yaw: yaw, distance: distance, camPosInHead: camPosInHead)
             
             if isConditionMet {
                 let now = Date()
-                let interval: TimeInterval = 0.11
+                let interval: TimeInterval = 0.06
                 let shouldCapture: Bool
                 if let lastTime = self.lastBurstCaptureTime {
                     shouldCapture = now.timeIntervalSince(lastTime) >= interval

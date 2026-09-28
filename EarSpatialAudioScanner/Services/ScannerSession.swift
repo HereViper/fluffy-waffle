@@ -508,11 +508,9 @@ extension ScannerSession: ARSessionDelegate {
                         tuningTaubinIters: Int(debugTaubinIterations)
                     )
                     
-                    if let mesh = mesh {
-                        let geom = self.buildSCNGeometry(from: mesh)
-                        Task { @MainActor in
-                            self.debugMesh = geom
-                        }
+                    let geom = self.buildSCNGeometry(from: mesh)
+                    Task { @MainActor in
+                        self.debugMesh = geom
                     }
                 }
                 return
@@ -596,7 +594,7 @@ extension ScannerSession: ARSessionDelegate {
         }
     }
     
-    private func buildSCNGeometry(from mesh: ScannedMesh) -> SCNGeometry {
+    nonisolated private func buildSCNGeometry(from mesh: ScannedMesh) -> SCNGeometry {
         let vertices = mesh.vertices.map { SCNVector3($0.position.x, $0.position.y, $0.position.z) }
         let vertexSource = SCNGeometrySource(vertices: vertices)
         

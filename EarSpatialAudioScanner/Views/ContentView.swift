@@ -174,7 +174,7 @@ public struct ContentView: View {
                 }
                 .padding()
                 
-            case .finished(let url):
+            case .finished:
                 VStack(spacing: 12) {
                     Button(action: {
                         showingShareSheet = true

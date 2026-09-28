@@ -83,10 +83,8 @@ public final class DepthPointCloudProcessor {
             bgraBytesPerRow = CVPixelBufferGetBytesPerRow(imageBuffer)
         }
         
-        let depthFloatPointer = depthAddress.assumingMemoryBound(to: UInt8.self)
-        
         for y in stride(from: 0, to: depthHeight, by: step) {
-            let rowStart = depthFloatPointer.advanced(by: y * depthBytesPerRow)
+            let rowStart = depthAddress.advanced(by: y * depthBytesPerRow)
             let rowFloats = rowStart.assumingMemoryBound(to: Float32.self)
             
             for x in stride(from: 0, to: depthWidth, by: step) {
